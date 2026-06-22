@@ -659,6 +659,16 @@ def main() -> None:
     except Exception as e:
         print(f'[!!] WARNING: SessionChannel reaper failed to start: {e}', flush=True)
 
+    # Start memory reaper and memory monitor threads.  These prune stale global
+    # structures (session locks, streaming state, bg-task dedupe registry) and
+    # log a one-line memory snapshot every 10 minutes.
+    try:
+        from api.background_process import start_memory_threads
+        start_memory_threads()
+        print('[ok] Memory reaper/monitor threads started', flush=True)
+    except Exception as e:
+        print(f'[!!] WARNING: Memory reaper/monitor failed to start: {e}', flush=True)
+
     # Load WebUI dashboard plugins
     try:
         from api.plugins import load_plugins
@@ -720,6 +730,12 @@ def main() -> None:
             stop_session_channel_reaper()
         except Exception:
             logger.debug("Failed to stop SessionChannel reaper during shutdown", exc_info=True)
+        # Stop memory reaper/monitor threads (daemon=True, best-effort join).
+        try:
+            from api.background_process import stop_memory_threads
+            stop_memory_threads()
+        except Exception:
+            logger.debug("Failed to stop memory threads during shutdown", exc_info=True)
 
 if __name__ == '__main__':
     main()

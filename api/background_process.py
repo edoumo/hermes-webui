@@ -851,12 +851,8 @@ def _process_one(evt: dict) -> None:
     # (session_id, process_id) pair via THIS module, skip the duplicate. Two
     # _move_to_finished() callers (kill_process racing the reader thread) can
     # occasionally enqueue twice despite the process_registry guard.
-    with _cfg.BG_TASK_COMPLETE_EVENTS_SEEN_LOCK:
-        seen = _cfg.BG_TASK_COMPLETE_EVENTS_SEEN.setdefault(session_id, set())
-        if process_id and process_id in seen:
-            return
-        if process_id:
-            seen.add(process_id)
+    if process_id and not _cfg.record_bg_task_complete_seen(session_id, process_id):
+        return
     payload = _build_payload(evt, session_id)
     _emit_bg_task_complete_events_coalesced(session_id, payload)
     _cfg.PENDING_BG_TASK_COMPLETIONS.add(session_id)
@@ -1264,3 +1260,60 @@ def stop_drain_thread(timeout: float = 2.0) -> None:
     th = _DRAIN_THREAD
     if th is not None and th.is_alive():
         th.join(timeout=timeout)
+
+
+# ── Memory reaper / monitor threads ──────────────────────────────────────────
+# Started alongside the drain thread.  They run forever as lightweight daemons.
+
+_MEMORY_REAPER_THREAD: threading.Thread | None = None
+_MEMORY_MONITOR_THREAD: threading.Thread | None = None
+
+
+def start_memory_reaper_thread() -> bool:
+    """Start the periodic memory-reaper daemon thread idempotently."""
+    from api import config as _cfg
+
+    global _MEMORY_REAPER_THREAD
+    if _MEMORY_REAPER_THREAD is not None and _MEMORY_REAPER_THREAD.is_alive():
+        return False
+    _MEMORY_REAPER_THREAD = threading.Thread(
+        target=_cfg.memory_reaper_loop,
+        name="hermes-webui-memory-reaper",
+        daemon=True,
+    )
+    _MEMORY_REAPER_THREAD.start()
+    return True
+
+
+def start_memory_monitor_thread() -> bool:
+    """Start the periodic memory-monitor logging thread idempotently."""
+    from api import config as _cfg
+
+    global _MEMORY_MONITOR_THREAD
+    if _MEMORY_MONITOR_THREAD is not None and _MEMORY_MONITOR_THREAD.is_alive():
+        return False
+    _MEMORY_MONITOR_THREAD = threading.Thread(
+        target=_cfg.memory_monitor_loop,
+        name="hermes-webui-memory-monitor",
+        daemon=True,
+    )
+    _MEMORY_MONITOR_THREAD.start()
+    return True
+
+
+def start_memory_threads() -> None:
+    """Convenience helper used by server.py at startup."""
+    start_memory_reaper_thread()
+    start_memory_monitor_thread()
+
+
+def stop_memory_threads(timeout: float = 2.0) -> None:
+    """Best-effort stop of the memory reaper/monitor threads.
+
+    The loops use simple ``time.sleep()`` inside ``while True`` and therefore
+    cannot be interrupted cleanly beyond the daemon=True property.  This
+    function is provided for completeness in test contexts.
+    """
+    for th in (_MEMORY_REAPER_THREAD, _MEMORY_MONITOR_THREAD):
+        if th is not None and th.is_alive():
+            th.join(timeout=timeout)

@@ -4179,21 +4179,7 @@ def _request_client_ip(handler) -> str:
 
 
 def _onboarding_request_is_local(handler) -> bool:
-    """Return True when an unauthenticated onboarding request is local/private.
-
-    Forwarded client-IP headers are ignored by default because direct clients can
-    spoof them. Operators behind a trusted reverse proxy may opt in with
-    HERMES_WEBUI_TRUST_FORWARDED_FOR=1, matching the explicit forwarded-header
-    trust model used elsewhere in the server.
-
-    When forwarded headers are PRESENT but not trusted, the request arrived
-    through a proxy, so the raw socket address is the proxy's (typically
-    loopback/private) and tells us nothing about the real client's locality.
-    In that case we deny rather than fall back to the proxy socket — otherwise a
-    public client behind any reverse proxy would be treated as local. Operators
-    who front the WebUI with a trusted proxy must set
-    HERMES_WEBUI_TRUST_FORWARDED_FOR=1 (or HERMES_WEBUI_ONBOARDING_OPEN=1).
-    """
+    """Return True when an unauthenticated onboarding request is local/private."""
     import ipaddress
 
     trust_forwarded = _truthy_env("HERMES_WEBUI_TRUST_FORWARDED_FOR")
@@ -4235,6 +4221,67 @@ def _onboarding_request_is_local(handler) -> bool:
     if forwarded_present:
         return bool(addr.is_loopback)
     return bool(addr.is_loopback or addr.is_private)
+
+
+def _request_is_local_admin(handler) -> bool:
+    """Return True only for loopback / unix-socket requests.
+
+    Stricter than _onboarding_request_is_local: LAN/private addresses are NOT
+    considered admin-local, so this helper is safe for sensitive debug endpoints
+    when no reverse-proxy trust is configured.
+    """
+    import ipaddress
+
+    raw = _request_client_ip(handler)
+    if not raw:
+        # Unix sockets have empty client_address in Python's HTTPServer; treat as
+        # local only if no forwarded headers are present (can't be spoofed).
+        return not bool(
+            handler.headers.get("X-Forwarded-For", "").strip()
+            or handler.headers.get("X-Real-IP", "").strip()
+        )
+    try:
+        return bool(ipaddress.ip_address(raw).is_loopback)
+    except ValueError:
+        return False
+
+
+# ── Debug / diagnostics endpoints ───────────────────────────────────────────
+
+def _handle_debug_memory(handler, parsed) -> bool:
+    """Return a non-sensitive memory snapshot for admin-local clients.
+
+    The endpoint is intentionally restricted to loopback / unix-socket by
+    default.  Operators behind a trusted reverse proxy may opt in with
+    HERMES_WEBUI_TRUST_FORWARDED_FOR=1 AND a local-only proxy rule, or disable
+    the restriction with HERMES_WEBUI_DEBUG_MEMORY_OPEN=1.
+    """
+    from api import config as _cfg
+
+    if not (
+        _truthy_env("HERMES_WEBUI_DEBUG_MEMORY_OPEN")
+        or _request_is_local_admin(handler)
+    ):
+        return bad(handler, "Forbidden", status=403)
+
+    payload = _cfg.build_memory_snapshot_payload()
+    payload["reaper_interval_secs"] = _cfg.MEMORY_REAPER_INTERVAL_SECS
+    payload["monitor_interval_secs"] = _cfg.MEMORY_MONITOR_INTERVAL_SECS
+    payload["bg_events_seen_ttl_secs"] = _cfg.BG_TASK_COMPLETE_EVENTS_SEEN_TTL_SECS
+    payload["stream_orphan_ttl_secs"] = _cfg.STREAM_ORPHAN_TTL_SECS
+    payload["gc_interval_secs"] = _cfg.MEMORY_GC_INTERVAL_SECS
+    payload["agent_cache_max"] = _cfg.SESSION_AGENT_CACHE_MAX
+    payload["sessions_max"] = _cfg.SESSIONS_MAX
+    return j(handler, payload)
+
+
+# ── Plugin visibility endpoint (#539) ───────────────────────────────────────
+_PLUGIN_VISIBILITY_HOOKS = (
+    "pre_tool_call",
+    "post_tool_call",
+    "pre_llm_call",
+    "post_llm_call",
+)
 
 
 def _onboarding_gate_allows(handler, auth_enabled: bool | None = None) -> bool:
@@ -9228,6 +9275,9 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == "/health":
         return _handle_health(handler, parsed)
+
+    if parsed.path == "/api/debug/memory":
+        return _handle_debug_memory(handler, parsed)
 
     if parsed.path == "/api/health/agent":
         payload = build_agent_health_payload()

@@ -11,6 +11,7 @@ Discovery order for all paths:
 
 import collections
 import copy
+import gc
 import hashlib
 import json
 import logging
@@ -7198,8 +7199,33 @@ def invalidate_gateway_caps(base_url: str | None = None) -> None:
 PROCESS_SESSION_INDEX: dict = {}  # process_registry session_key -> WebUI session_id
 PROCESS_SESSION_INDEX_LOCK = threading.Lock()
 PENDING_BG_TASK_COMPLETIONS: set = set()  # session_ids awaiting a process_complete wakeup turn
-BG_TASK_COMPLETE_EVENTS_SEEN: dict = {}  # session_id -> set[process_id] for idempotency
+
+# Background-task completion idempotency, now with TTL so the registry does not
+# grow unbounded for long-lived sessions / autonomous agents.  Structure:
+#   session_id -> process_id -> timestamp_seconds
+# Older entries are pruned lazily on read and periodically by the memory reaper.
+BG_TASK_COMPLETE_EVENTS_SEEN: dict[str, dict[str, float]] = {}
 BG_TASK_COMPLETE_EVENTS_SEEN_LOCK = threading.Lock()
+BG_TASK_COMPLETE_EVENTS_SEEN_TTL_SECS: float = float(
+    os.getenv("HERMES_WEBUI_BG_EVENTS_SEEN_TTL_SECS", "86400")
+)  # default 24h
+BG_TASK_COMPLETE_EVENTS_SEEN_MAX_PER_SESSION: int = int(
+    os.getenv("HERMES_WEBUI_BG_EVENTS_SEEN_MAX_PER_SESSION", "1000")
+)
+
+# Memory-reaper tunables.  These only affect cleanup cadence, not business logic.
+MEMORY_REAPER_INTERVAL_SECS: float = float(
+    os.getenv("HERMES_WEBUI_MEMORY_REAPER_INTERVAL_SECS", "300")
+)  # default 5 min
+STREAM_ORPHAN_TTL_SECS: float = float(
+    os.getenv("HERMES_WEBUI_STREAM_ORPHAN_TTL_SECS", "1800")
+)  # default 30 min
+MEMORY_GC_INTERVAL_SECS: float = float(
+    os.getenv("HERMES_WEBUI_MEMORY_GC_INTERVAL_SECS", "600")
+)  # default 10 min
+MEMORY_MONITOR_INTERVAL_SECS: float = float(
+    os.getenv("HERMES_WEBUI_MEMORY_MONITOR_INTERVAL_SECS", "600")
+)  # default 10 min
 
 # Defer-path fix (fast-bg-task wakeup race): when a completion arrives while a
 # turn is active, Option Z's drain branch CANNOT start a turn (would 409). The
@@ -7270,7 +7296,288 @@ def unregister_active_run(stream_id: str) -> None:
         ACTIVE_RUNS.pop(stream_id, None)
         LAST_RUN_FINISHED_AT = time.time()
 
-# Agent cache: reuse AIAgent across messages in the same WebUI session so that
+
+def _prune_bg_task_complete_seen(session_id: str | None = None) -> int:
+    """Remove expired entries from BG_TASK_COMPLETE_EVENTS_SEEN.
+
+    If ``session_id`` is None, prune all sessions (periodic reaper path).
+    Returns the number of entries removed.
+    """
+    now = time.time()
+    ttl = max(60.0, BG_TASK_COMPLETE_EVENTS_SEEN_TTL_SECS)
+    cutoff = now - ttl
+    removed = 0
+    with BG_TASK_COMPLETE_EVENTS_SEEN_LOCK:
+        if session_id is not None:
+            per_session = BG_TASK_COMPLETE_EVENTS_SEEN.get(session_id, {})
+            expired = [pid for pid, ts in per_session.items() if ts < cutoff]
+            for pid in expired:
+                per_session.pop(pid, None)
+                removed += 1
+            if not per_session:
+                BG_TASK_COMPLETE_EVENTS_SEEN.pop(session_id, None)
+            return removed
+        expired_sessions = []
+        for sid, per_session in BG_TASK_COMPLETE_EVENTS_SEEN.items():
+            expired_pids = [pid for pid, ts in per_session.items() if ts < cutoff]
+            for pid in expired_pids:
+                per_session.pop(pid, None)
+                removed += 1
+            if not per_session:
+                expired_sessions.append(sid)
+            # Bound per-session growth as defense-in-depth.
+            max_per = max(10, BG_TASK_COMPLETE_EVENTS_SEEN_MAX_PER_SESSION)
+            if len(per_session) > max_per:
+                sorted_pids = sorted(per_session.items(), key=lambda kv: kv[1])
+                for pid, _ in sorted_pids[: len(per_session) - max_per]:
+                    per_session.pop(pid, None)
+                    removed += 1
+        for sid in expired_sessions:
+            BG_TASK_COMPLETE_EVENTS_SEEN.pop(sid, None)
+    return removed
+
+
+def record_bg_task_complete_seen(session_id: str, process_id: str) -> bool:
+    """Record that a background-task completion was already processed.
+
+    Returns True if this is the first time we see (session_id, process_id).
+    """
+    if not session_id or not process_id:
+        return False
+    _prune_bg_task_complete_seen(session_id)
+    with BG_TASK_COMPLETE_EVENTS_SEEN_LOCK:
+        per_session = BG_TASK_COMPLETE_EVENTS_SEEN.setdefault(session_id, {})
+        first = process_id not in per_session
+        per_session[process_id] = time.time()
+        return first
+
+
+def _cleanup_stale_session_agent_locks() -> int:
+    """Remove SESSION_AGENT_LOCKS entries no longer backed by a live session.
+
+    We only drop a lock when the session_id is absent from both the lightweight
+    SESSIONS LRU and the SESSION_AGENT_CACHE.  The lock object itself may still be
+    held by a running thread, but removing the dict entry only drops the named
+    lookup; the actual threading.Lock object stays alive as long as a reference
+    exists in a ``with _get_session_agent_lock()`` frame.
+    """
+    removed = 0
+    with SESSION_AGENT_LOCKS_LOCK:
+        # Snapshot keys to avoid mutating while iterating.
+        keys = list(SESSION_AGENT_LOCKS.keys())
+        for sid in keys:
+            if sid in SESSIONS or sid in SESSION_AGENT_CACHE:
+                continue
+            try:
+                # Best-effort safety: don't drop if any active run still uses
+                # this session.  ACTIVE_RUNS stores stream_id, not session_id,
+                # so this is an under-approximation; a future turn will recreate
+                # the lock lazily if needed.
+                with ACTIVE_RUNS_LOCK:
+                    if any(meta.get("session_id") == sid for meta in ACTIVE_RUNS.values()):
+                        continue
+            except Exception:
+                pass
+            SESSION_AGENT_LOCKS.pop(sid, None)
+            removed += 1
+    return removed
+
+
+def _cleanup_orphan_stream_state() -> dict[str, int]:
+    """Remove stale per-stream dictionaries left behind by crashes/kills.
+
+    A stream is considered orphaned when it has no ACTIVE_RUNS entry and was
+    created more than STREAM_ORPHAN_TTL_SECS ago.  We also remove entries whose
+    StreamChannel subscriber count is zero and that are not referenced by
+    AGENT_INSTANCES.  Returns a mapping {dict_name: entries_removed}.
+    """
+    now = time.time()
+    ttl = max(60.0, STREAM_ORPHAN_TTL_SECS)
+    removed: dict[str, int] = {}
+
+    with STREAMS_LOCK:
+        with ACTIVE_RUNS_LOCK:
+            active = set(ACTIVE_RUNS.keys())
+
+        def _is_orphan(key: str) -> bool:
+            if key in active:
+                return False
+            chan = STREAMS.get(key)
+            if isinstance(chan, StreamChannel):
+                snap = chan.diagnostic_snapshot()
+                if snap.get("subscriber_count", 0) > 0:
+                    return False
+            # If AGENT_INSTANCES still references it, the worker may be winding
+            # down but not finished; give it the full TTL grace.
+            agent = AGENT_INSTANCES.get(key)
+            if agent is not None:
+                meta = getattr(agent, "_metadata", None)
+                if isinstance(meta, dict):
+                    started = meta.get("started_at") or meta.get("created_at") or 0
+                    if started and (now - started) < ttl:
+                        return False
+                # No usable metadata: keep for the TTL from server start as a
+                # conservative default.
+                return (now - SERVER_START_TIME) > ttl
+            return True
+
+        for name, registry in (
+            ("STREAMS", STREAMS),
+            ("CANCEL_FLAGS", CANCEL_FLAGS),
+            ("AGENT_INSTANCES", AGENT_INSTANCES),
+            ("STREAM_PARTIAL_TEXT", STREAM_PARTIAL_TEXT),
+            ("STREAM_REASONING_TEXT", STREAM_REASONING_TEXT),
+            ("STREAM_LIVE_TOOL_CALLS", STREAM_LIVE_TOOL_CALLS),
+            ("STREAM_GOAL_RELATED", STREAM_GOAL_RELATED),
+            ("STREAM_LAST_EVENT_ID", STREAM_LAST_EVENT_ID),
+        ):
+            count = 0
+            for key in list(registry.keys()):
+                if _is_orphan(key):
+                    registry.pop(key, None)
+                    count += 1
+            if count:
+                removed[name] = count
+
+    return removed
+
+
+def run_memory_reaper_once() -> dict[str, object]:
+    """Single pass of all memory-reaper cleanups.  Called by the daemon thread."""
+    bg_removed = _prune_bg_task_complete_seen()
+    locks_removed = _cleanup_stale_session_agent_locks()
+    orphan_removed: dict[str, int] = _cleanup_orphan_stream_state()
+    total_removed = bg_removed + locks_removed + sum(orphan_removed.values())
+    result: dict[str, object] = {
+        "bg_task_complete_seen_removed": bg_removed,
+        "session_agent_locks_removed": locks_removed,
+        "orphan_stream_state": orphan_removed,
+        "total_removed": total_removed,
+    }
+    return result
+
+
+# Soft GC: generation-1 collection only, run infrequently.  This is a backstop
+# for reference cycles, not a substitute for dropping strong references.
+_last_soft_gc: float = 0.0
+_soft_gc_lock = threading.Lock()
+
+
+def maybe_run_soft_gc() -> bool:
+    """Run gc.collect(1) at most once per MEMORY_GC_INTERVAL_SECS."""
+    global _last_soft_gc
+    now = time.time()
+    interval = max(60.0, MEMORY_GC_INTERVAL_SECS)
+    with _soft_gc_lock:
+        if now - _last_soft_gc < interval:
+            return False
+        _last_soft_gc = now
+    try:
+        gc.collect(1)
+    except Exception:
+        logger.debug("Soft gc.collect(1) failed", exc_info=True)
+    return True
+
+
+def memory_reaper_loop() -> None:
+    """Daemon thread: periodically prune stale global structures."""
+    interval = max(30.0, MEMORY_REAPER_INTERVAL_SECS)
+    while True:
+        try:
+            time.sleep(interval)
+            result = run_memory_reaper_once()
+            if result.get("total_removed"):
+                logger.info("memory_reaper cleanup: %s", result)
+        except Exception:
+            logger.debug("Memory reaper loop iteration failed", exc_info=True)
+
+
+def memory_monitor_loop() -> None:
+    """Daemon thread: log a one-line memory snapshot every N seconds."""
+    import threading
+
+    interval = max(60.0, MEMORY_MONITOR_INTERVAL_SECS)
+    while True:
+        try:
+            time.sleep(interval)
+            payload = build_memory_snapshot_payload()
+            logger.info("memory_monitor %s", json.dumps(payload, ensure_ascii=False, default=str))
+        except Exception:
+            logger.debug("Memory monitor loop iteration failed", exc_info=True)
+
+
+def _process_rss_bytes() -> int | None:
+    """Return this process RSS in bytes, or None if /proc/self/status is unavailable."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        value = int(parts[1])
+                        unit = parts[2].lower() if len(parts) >= 3 else "kb"
+                        multiplier = {"kb": 1024, "mb": 1024 * 1024, "gb": 1024 ** 3}.get(unit, 1024)
+                        return value * multiplier
+    except Exception:
+        pass
+    return None
+
+
+def _child_process_count() -> int | None:
+    """Count immediate child processes via /proc/self/task/*/children."""
+    try:
+        count = 0
+        for entry in os.listdir("/proc/self/task"):
+            children_file = f"/proc/self/task/{entry}/children"
+            if os.path.exists(children_file):
+                with open(children_file) as f:
+                    count += len(f.read().split())
+        return count
+    except Exception:
+        return None
+
+
+def build_memory_snapshot_payload() -> dict[str, object]:
+    """Return a non-sensitive memory / structure-size snapshot."""
+    import threading
+
+    with BG_TASK_COMPLETE_EVENTS_SEEN_LOCK:
+        bg_seen_total = sum(len(v) for v in BG_TASK_COMPLETE_EVENTS_SEEN.values())
+        bg_seen_sessions = len(BG_TASK_COMPLETE_EVENTS_SEEN)
+
+    with STREAMS_LOCK:
+        stream_count = len(STREAMS)
+        agent_instance_count = len(AGENT_INSTANCES)
+
+    with SESSION_AGENT_CACHE_LOCK:
+        agent_cache_count = len(SESSION_AGENT_CACHE)
+
+    with LOCK:
+        sessions_count = len(SESSIONS)
+
+    with SESSION_AGENT_LOCKS_LOCK:
+        locks_count = len(SESSION_AGENT_LOCKS)
+
+    with ACTIVE_RUNS_LOCK:
+        active_runs_count = len(ACTIVE_RUNS)
+
+    rss = _process_rss_bytes()
+    payload: dict[str, object] = {
+        "rss_bytes": rss,
+        "rss_mb": round(rss / (1024 * 1024), 2) if rss else None,
+        "thread_count": threading.active_count(),
+        "child_process_count": _child_process_count(),
+        "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
+        "sessions_count": sessions_count,
+        "session_agent_cache_count": agent_cache_count,
+        "session_agent_locks_count": locks_count,
+        "streams_count": stream_count,
+        "agent_instances_count": agent_instance_count,
+        "active_runs_count": active_runs_count,
+        "bg_task_complete_seen_sessions": bg_seen_sessions,
+        "bg_task_complete_seen_total": bg_seen_total,
+    }
+    return payload
 # _user_turn_count survives between turns.  This mirrors the gateway's
 # _agent_cache pattern and is required for injectionFrequency: "first-turn".
 # LRU cache with size limit to prevent memory bloat.
