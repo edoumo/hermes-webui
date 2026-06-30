@@ -18,6 +18,7 @@ import logging
 import os
 import queue
 import re
+import socket
 import sys
 import threading
 import time
@@ -139,13 +140,13 @@ def _discover_agent_dir() -> Path:
       5. Common install paths            -- ~/.hermes/hermes-agent (again as fallback)
       6. HOME / hermes-agent             -- ~/hermes-agent (simple flat layout)
     """
-    candidates = []
+    explicit_override = os.getenv("HERMES_WEBUI_AGENT_DIR")
+    if explicit_override:
+        explicit_path = Path(explicit_override).expanduser().resolve()
+        if explicit_path.exists() and _looks_like_agent_source_root(explicit_path):
+            return explicit_path
 
-    # 1. Explicit env var
-    if os.getenv("HERMES_WEBUI_AGENT_DIR"):
-        candidates.append(
-            Path(os.getenv("HERMES_WEBUI_AGENT_DIR")).expanduser().resolve()
-        )
+    candidates = []
 
     # 2. HERMES_HOME / hermes-agent
     hermes_home = os.getenv("HERMES_HOME", str(_DEFAULT_HERMES_HOME))
@@ -155,7 +156,7 @@ def _discover_agent_dir() -> Path:
     candidates.append(REPO_ROOT.parent / "hermes-agent")
 
     # 4. Parent is the agent repo itself (repo cloned inside hermes-agent/)
-    if (REPO_ROOT.parent / "run_agent.py").exists():
+    if _looks_like_agent_source_root(REPO_ROOT.parent):
         candidates.append(REPO_ROOT.parent)
 
     # 5. ~/.hermes/hermes-agent (explicit common path)
@@ -172,11 +173,36 @@ def _discover_agent_dir() -> Path:
     for sys_prefix in ("/opt", "/usr/local", "/usr/local/share"):
         candidates.append(Path(sys_prefix) / "hermes-agent")
 
+    # Prefer real source checkouts before pip-style roots so lookalikes cannot preempt them.
     for path in candidates:
         if path.exists() and (path / "run_agent.py").exists():
             return path.resolve()
 
+    for path in candidates:
+        if path.exists() and _looks_like_pip_style_agent_source_root(path):
+            return path.resolve()
+
     return None
+
+
+def _looks_like_agent_source_root(path: Path) -> bool:
+    """Return True when a directory resembles a hermes-agent source root."""
+    if (path / "run_agent.py").exists():
+        return True
+    return _looks_like_pip_style_agent_source_root(path)
+
+
+def _looks_like_pip_style_agent_source_root(path: Path) -> bool:
+    """Return True for pip-style agent roots with a real agent package signal."""
+    if not (path / "cron" / "jobs.py").exists():
+        return False
+    if (path / "hermes").exists():
+        return True
+    hermes_cli_dir = path / "hermes_cli"
+    return (
+        (hermes_cli_dir / "__init__.py").exists()
+        or (hermes_cli_dir / "main.py").exists()
+    )
 
 
 def _discover_python(agent_dir: Path) -> str:
@@ -415,6 +441,19 @@ def _apply_config_defaults(config_data: dict) -> None:
     for key, value in _DEFAULT_EXPERIMENTAL_CONFIG.items():
         experimental.setdefault(key, value)
 
+ 
+def reload_config_if_stale() -> None:
+    """Refresh config.yaml once for concurrent stale read paths."""
+    with _cfg_lock:
+        try:
+            config_path = _get_config_path()
+            current_mtime = config_path.stat().st_mtime
+        except OSError:
+            current_mtime = 0.0
+        cache_stale = current_mtime != _cfg_mtime or _cfg_path != config_path
+        if not _cfg_cache or (cache_stale and not _cfg_has_in_memory_overrides()):
+            _refresh_config_cache(config_path)
+
 
 def get_config() -> dict:
     """Return the cached config dict, loading from disk if needed."""
@@ -425,7 +464,7 @@ def get_config() -> dict:
         current_mtime = 0.0
     cache_stale = current_mtime != _cfg_mtime or _cfg_path != config_path
     if not _cfg_cache or (cache_stale and not _cfg_has_in_memory_overrides()):
-        reload_config()
+        reload_config_if_stale()
     # When a test (or runtime caller) has rebound ``cfg`` to a different dict
     # via monkeypatch.setattr(config, "cfg", ...), return that override rather
     # than the underlying _cfg_cache. Without this branch, get_config() would
@@ -474,76 +513,86 @@ def is_unified_session_db_enabled(config_data: dict | None = None) -> bool:
     return experimental.get("unified_session_db") is True
 
 
+def _refresh_config_cache(config_path: Path | None = None) -> None:
+    """Refresh _cfg_cache for ``config_path``.
+
+    Callers must hold _cfg_lock when invoking this helper because it mutates
+    shared state.
+    """
+    global _cfg_mtime, _cfg_path, _cfg_fingerprint
+    if config_path is None:
+        config_path = _get_config_path()
+    _cfg_cache.clear()
+    # Remember the old mtime so we can tell whether config actually changed
+    # vs. first-ever load (mtime == 0.0, e.g. server start or profile switch).
+    _old_cfg_mtime = _cfg_mtime
+    _cfg_path = config_path
+    _cfg_mtime = 0.0
+    try:
+        if config_path.exists():
+            # Route the parse through the mtime-keyed cache (#4652) so an
+            # unchanged config.yaml isn't re-parsed (~125ms+ on a large file)
+            # on every reload_config() on the hot path (profile switch /
+            # load_settings, #4662 Phase 2). We take the RAW cached dict and
+            # run the env expansion HERE, pinned to the unscoped process-env
+            # view (below) — never the helper's per-call expansion — for the
+            # #798 TLS reason documented in the pin block.
+            loaded = _load_yaml_config_file_raw(config_path)
+            if isinstance(loaded, dict):
+                if loaded:
+                    # The process-global _cfg_cache must reflect PROCESS-env
+                    # expansion, never a profile-scoped block_process_env_fallback
+                    # view — otherwise a reload that fires while a readonly/worker
+                    # scope is active (profile alternation resolves _get_config_path
+                    # to the named profile, #798 TLS) would bake under-expanded
+                    # literal ${VAR}s into the shared cache and starve concurrent
+                    # readers of the module-level `cfg` alias. Expansion re-runs
+                    # per-read elsewhere; here we pin the cache to the unscoped view.
+                    _prev_block = getattr(_thread_ctx, "block_process_env_fallback", False)
+                    _prev_env = getattr(_thread_ctx, "env", None)
+                    try:
+                        _thread_ctx.block_process_env_fallback = False
+                        _thread_ctx.env = {}
+                        _cfg_cache.update(_expand_env_vars(loaded))
+                    finally:
+                        _thread_ctx.block_process_env_fallback = _prev_block
+                        if _prev_env is None:
+                            try:
+                                del _thread_ctx.env
+                            except AttributeError:
+                                pass
+                        else:
+                            _thread_ctx.env = _prev_env
+                # Stamp _cfg_mtime whenever the file parsed to a dict — INCLUDING
+                # an empty {} config. The cache-update above is skipped for {} (it's
+                # a no-op), but _cfg_mtime MUST still be set or get_config()'s
+                # `current_mtime != _cfg_mtime` stale check fires on every call and
+                # spins reload_config() under _cfg_lock forever (a `{}` config from a
+                # freshly created/reset profile is reachable on the switch hot path).
+                # This matches master's pre-#4662 behavior (it entered the block for
+                # {} and set the mtime); the inner `if loaded:` only gates the no-op
+                # cache update, not the mtime stamp.
+                try:
+                    _cfg_mtime = Path(config_path).stat().st_mtime
+                except OSError:
+                    _cfg_mtime = 0.0
+    except Exception:
+        logger.debug("Failed to load yaml config from %s", config_path)
+    _apply_config_defaults(_cfg_cache)
+    _cfg_fingerprint = _fingerprint_config(_cfg_cache)
+    # Bust the models cache so the next request sees fresh config values.
+    # Only delete the disk cache when config has actually changed -- not on
+    # first-ever load (when _old_cfg_mtime == 0.0, i.e. server start or
+    # profile switch) -- preserving the disk cache so the next restart
+    # still hits the fast path without a cold run.
+    if _old_cfg_mtime != 0.0:
+        _delete_models_cache_on_disk()
+
+
 def reload_config() -> None:
     """Reload config.yaml from the active profile's directory."""
-    global _cfg_mtime, _cfg_path, _cfg_fingerprint
     with _cfg_lock:
-        _cfg_cache.clear()
-        config_path = _get_config_path()
-        # Remember the old mtime so we can tell whether config actually changed
-        # vs. first-ever load (mtime == 0.0, e.g. server start or profile switch).
-        _old_cfg_mtime = _cfg_mtime
-        _cfg_path = config_path
-        _cfg_mtime = 0.0
-        try:
-            if config_path.exists():
-                # Route the parse through the mtime-keyed cache (#4652) so an
-                # unchanged config.yaml isn't re-parsed (~125ms+ on a large file)
-                # on every reload_config() on the hot path (profile switch /
-                # load_settings, #4662 Phase 2). We take the RAW cached dict and
-                # run the env expansion HERE, pinned to the unscoped process-env
-                # view (below) — never the helper's per-call expansion — for the
-                # #798 TLS reason documented in the pin block.
-                loaded = _load_yaml_config_file_raw(config_path)
-                if isinstance(loaded, dict):
-                    if loaded:
-                        # The process-global _cfg_cache must reflect PROCESS-env
-                        # expansion, never a profile-scoped block_process_env_fallback
-                        # view — otherwise a reload that fires while a readonly/worker
-                        # scope is active (profile alternation resolves _get_config_path
-                        # to the named profile, #798 TLS) would bake under-expanded
-                        # literal ${VAR}s into the shared cache and starve concurrent
-                        # readers of the module-level `cfg` alias. Expansion re-runs
-                        # per-read elsewhere; here we pin the cache to the unscoped view.
-                        _prev_block = getattr(_thread_ctx, "block_process_env_fallback", False)
-                        _prev_env = getattr(_thread_ctx, "env", None)
-                        try:
-                            _thread_ctx.block_process_env_fallback = False
-                            _thread_ctx.env = {}
-                            _cfg_cache.update(_expand_env_vars(loaded))
-                        finally:
-                            _thread_ctx.block_process_env_fallback = _prev_block
-                            if _prev_env is None:
-                                try:
-                                    del _thread_ctx.env
-                                except AttributeError:
-                                    pass
-                            else:
-                                _thread_ctx.env = _prev_env
-                    # Stamp _cfg_mtime whenever the file parsed to a dict — INCLUDING
-                    # an empty {} config. The cache-update above is skipped for {} (it's
-                    # a no-op), but _cfg_mtime MUST still be set or get_config()'s
-                    # `current_mtime != _cfg_mtime` stale check fires on every call and
-                    # spins reload_config() under _cfg_lock forever (a `{}` config from a
-                    # freshly created/reset profile is reachable on the switch hot path).
-                    # This matches master's pre-#4662 behavior (it entered the block for
-                    # {} and set the mtime); the inner `if loaded:` only gates the no-op
-                    # cache update, not the mtime stamp.
-                    try:
-                        _cfg_mtime = Path(config_path).stat().st_mtime
-                    except OSError:
-                        _cfg_mtime = 0.0
-        except Exception:
-            logger.debug("Failed to load yaml config from %s", config_path)
-        _apply_config_defaults(_cfg_cache)
-        _cfg_fingerprint = _fingerprint_config(_cfg_cache)
-        # Bust the models cache so the next request sees fresh config values.
-        # Only delete the disk cache when config has actually changed -- not on
-        # first-ever load (when _old_cfg_mtime == 0.0, i.e. server start or
-        # profile switch) -- preserving the disk cache so the next restart
-        # still hits the fast path without a cold run.
-        if _old_cfg_mtime != 0.0:
-            _delete_models_cache_on_disk()
+        _refresh_config_cache(_get_config_path())
 
 
 # Memoized parse cache for _load_yaml_config_file, keyed on (resolved path,
@@ -1170,6 +1219,37 @@ _PROVIDER_ALIASES = {
     # OpenAI-compat path. See #1384.
     "local": "custom",
 }
+
+
+def _get_anthropic_fallback_env_vars() -> tuple[str, ...]:
+    """Read Anthropic auth env vars from the shared agent registry when available."""
+    fallback = (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    )
+    try:
+        from hermes_cli.auth import PROVIDER_REGISTRY
+
+        anthropic = (
+            PROVIDER_REGISTRY.get("anthropic")
+            if isinstance(PROVIDER_REGISTRY, dict)
+            else None
+        )
+        env_vars = getattr(anthropic, "api_key_env_vars", None)
+        if not env_vars:
+            return fallback
+
+        out = []
+        for _var in env_vars:
+            if not isinstance(_var, str):
+                continue
+            _normalized = _var.strip()
+            if _normalized and _normalized not in out:
+                out.append(_normalized)
+        return tuple(out) if out else fallback
+    except Exception:
+        return fallback
 
 
 def _resolve_provider_alias(name: str) -> str:
@@ -3427,6 +3507,83 @@ def get_reasoning_status(
     }
 
 
+def _parse_positive_int_config_value(raw) -> int | None:
+    if raw is None:
+        return None
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def get_max_tokens_status() -> dict[str, int | None]:
+    """Return the Settings-facing max_tokens state from the active profile config.
+
+    ``max_tokens`` is the root override the Settings field owns directly.
+    ``max_tokens_fallback`` is the agent-level fallback when the root config
+    resolves to ``None``, matching the streaming path exactly.
+    ``max_tokens_effective`` is the runtime cap a new streaming turn would
+    currently use.
+    """
+    config_data = _load_yaml_config_file(_get_config_path())
+    if not isinstance(config_data, dict):
+        return {
+            "max_tokens": None,
+            "max_tokens_effective": None,
+            "max_tokens_fallback": None,
+        }
+
+    raw_root_value = config_data.get("max_tokens")
+    root_value = _parse_positive_int_config_value(raw_root_value)
+
+    fallback_value = None
+    if raw_root_value is None:
+        agent_cfg = config_data.get("agent")
+        if isinstance(agent_cfg, dict):
+            fallback_value = _parse_positive_int_config_value(agent_cfg.get("max_tokens"))
+
+    effective_value = root_value if root_value is not None else fallback_value
+    return {
+        "max_tokens": root_value,
+        "max_tokens_effective": effective_value,
+        "max_tokens_fallback": fallback_value,
+    }
+
+
+def set_max_tokens(max_tokens) -> dict[str, int | None]:
+    """Persist a root-level ``max_tokens`` override to the active profile config.
+
+    Blank/``None`` clears the root override so ``agent.max_tokens`` can resume.
+    Positive integers are written to the active profile's ``config.yaml``.
+    Unrelated YAML keys are preserved verbatim.
+    """
+    if isinstance(max_tokens, str):
+        max_tokens = max_tokens.strip()
+    clear_root = max_tokens in (None, "")
+    parsed_max_tokens = _parse_positive_int_config_value(max_tokens)
+    if not clear_root and parsed_max_tokens is None:
+        return get_max_tokens_status()
+
+    config_path = _get_config_path()
+    should_save = True
+    with _cfg_lock:
+        config_data = _load_yaml_config_file_raw(config_path)
+        if clear_root:
+            if "max_tokens" not in config_data:
+                should_save = False
+            else:
+                config_data.pop("max_tokens", None)
+        elif parsed_max_tokens is not None:
+            config_data["max_tokens"] = parsed_max_tokens
+        if should_save:
+            _save_yaml_config_file(config_path, config_data)
+    if not should_save:
+        return get_max_tokens_status()
+    reload_config()
+    return get_max_tokens_status()
+
+
 def set_reasoning_display(show: bool) -> dict:
     """Persist ``display.show_reasoning`` to the active profile's config.yaml.
 
@@ -3499,14 +3656,85 @@ def _public_advanced_model_options(model_cfg: dict) -> dict:
     }
 
 
-def _main_model_request_overrides(config_data: dict) -> dict:
-    """Return supported runtime request overrides for the main chat model."""
+def _is_openai_family_provider(provider: str | None) -> bool:
+    """Return True when a provider should receive OpenAI-family request overrides."""
+    if not provider:
+        return False
+    resolved = str(_resolve_provider_alias(str(provider).strip().lower()))
+    return resolved in ("openai", "openai-api", "openai-codex")
+
+
+def _main_model_supports_service_tier(
+    model_id: str | None,
+    provider: str | None,
+) -> bool:
+    """Return True when the current main-model selection can use OpenAI service tier."""
+    if not _is_openai_family_provider(provider):
+        return False
+    resolved = str(provider or "").strip().lower()
+    if resolved == "openai-codex":
+        return False
+    raw_model = str(model_id or "").strip().lower()
+    if not raw_model:
+        return True
+    if "/" in raw_model:
+        prefix, bare_model = raw_model.split("/", 1)
+        if prefix != "openai":
+            return False
+    else:
+        bare_model = raw_model
+    if "codex" in bare_model:
+        return False
+    return (
+        _is_first_party_model("openai", bare_model)
+        or bare_model.startswith(("gpt-", "o1", "o3", "o4"))
+    )
+
+
+def _public_main_service_tier(model_cfg: dict) -> str:
+    """Return the saved main-model service tier only for OpenAI-family providers."""
+    if not isinstance(model_cfg, dict):
+        return ""
+    model_id = str(model_cfg.get("default") or model_cfg.get("name") or "").strip()
+    provider = str(model_cfg.get("provider") or "").strip().lower()
+    if not provider:
+        _, provider, _ = resolve_model_provider(model_id)
+    if not _main_model_supports_service_tier(model_id, provider):
+        return ""
+    service_tier = str(model_cfg.get("service_tier") or "").strip().lower()
+    return "priority" if service_tier == "priority" else ""
+
+
+def _main_model_request_overrides(
+    config_data: dict,
+    effective_model: str | None = None,
+    effective_provider: str | None = None,
+) -> dict:
+    """Return supported runtime request overrides for the main chat model.
+
+    When *effective_model* / *effective_provider* are supplied, the
+    service-tier gate checks those instead of the saved default model,
+    so a per-session model switch to a non-OpenAI provider does not
+    leak ``service_tier`` onto an unsupported request.
+    """
     if not isinstance(config_data, dict):
         return {}
     model_cfg = config_data.get("model", {})
     if not isinstance(model_cfg, dict):
         return {}
     overrides = {}
+    gate_model = effective_model
+    gate_provider = effective_provider
+    if not gate_model:
+        gate_model = str(model_cfg.get("default") or model_cfg.get("name") or "").strip()
+    if not gate_provider:
+        gate_provider = str(model_cfg.get("provider") or "").strip().lower()
+        if not gate_provider:
+            _, gate_provider, _ = resolve_model_provider(gate_model)
+    if _main_model_supports_service_tier(gate_model, gate_provider):
+        service_tier = str(model_cfg.get("service_tier") or "").strip().lower()
+        if service_tier == "priority":
+            overrides["service_tier"] = "priority"
     extra_body = model_cfg.get("extra_body")
     if isinstance(extra_body, dict) and extra_body:
         overrides["extra_body"] = copy.deepcopy(extra_body)
@@ -3549,6 +3777,14 @@ def _apply_advanced_model_options(model_cfg: dict, advanced: dict | None) -> Non
                 model_cfg.pop("extra_body", None)
         else:
             raise ValueError("extra_body must be a JSON object")
+    if "service_tier" in advanced:
+        service_tier = str(advanced.get("service_tier") or "").strip().lower()
+        if not service_tier or service_tier == "default":
+            model_cfg.pop("service_tier", None)
+        elif service_tier == "priority":
+            model_cfg["service_tier"] = "priority"
+        else:
+            raise ValueError("service_tier must be one of: default, priority")
     if advanced.get("api_key_clear"):
         model_cfg.pop("api_key", None)
     api_key = str(advanced.get("api_key") or "").strip()
@@ -3556,7 +3792,7 @@ def _apply_advanced_model_options(model_cfg: dict, advanced: dict | None) -> Non
         model_cfg["api_key"] = api_key
 
 
-def set_hermes_default_model(model_id: str, advanced: dict | None = None) -> dict:
+def set_hermes_default_model(model_id: str, provider: str | None = None, advanced: dict | None = None) -> dict:
     """Persist the Hermes default model in config.yaml and reload runtime config."""
     selected_model = str(model_id or "").strip()
     if not selected_model:
@@ -3573,6 +3809,7 @@ def set_hermes_default_model(model_id: str, advanced: dict | None = None) -> dic
             model_cfg = {}
 
         previous_provider = str(model_cfg.get("provider") or "").strip()
+        requested_provider = str(provider or "").strip()
         resolved_model, resolved_provider, resolved_base_url = resolve_model_provider(
             selected_model
         )
@@ -3586,7 +3823,8 @@ def set_hermes_default_model(model_id: str, advanced: dict | None = None) -> dic
         # CLI-shaped bare form via `_applyModelToDropdown()`'s normalising
         # matcher — see `static/panels.js` (#895).
         persisted_model = str(resolved_model or selected_model).strip()
-        persisted_provider = str(resolved_provider or previous_provider or "").strip()
+        persisted_provider = str(requested_provider or resolved_provider or previous_provider or "").strip()
+        provider_override_won = bool(requested_provider and requested_provider != str(resolved_provider or "").strip())
         # Never persist the bogus ``local`` value — see #1384. The auto-detect
         # block in ``_build_available_models_uncached`` was rewriting unknown
         # loopback hosts to ``provider: "local"``, which is not registered and
@@ -3599,15 +3837,22 @@ def set_hermes_default_model(model_id: str, advanced: dict | None = None) -> dic
         if persisted_provider:
             model_cfg["provider"] = persisted_provider
 
-        if resolved_base_url:
+        if resolved_base_url and not provider_override_won:
             model_cfg["base_url"] = str(resolved_base_url).strip().rstrip("/")
         elif persisted_provider != previous_provider:
             if persisted_provider == "openai":
                 model_cfg["base_url"] = "https://api.openai.com/v1"
-            elif not persisted_provider.startswith("custom:"):
+            else:
+                # Provider changed and we have no resolved URL for the new one.
+                # Drop the previous provider's base_url so New Chat doesn't route
+                # to the old endpoint — this MUST also cover custom:* providers
+                # (a different custom provider has a different URL); leaving the
+                # stale base_url sent requests to the wrong host (#4728).
                 model_cfg.pop("base_url", None)
 
         _apply_advanced_model_options(model_cfg, advanced)
+        if not _main_model_supports_service_tier(persisted_model, persisted_provider):
+            model_cfg.pop("service_tier", None)
 
         config_data["model"] = model_cfg
         _save_yaml_config_file(config_path, config_data)
@@ -3618,7 +3863,7 @@ def set_hermes_default_model(model_id: str, advanced: dict | None = None) -> dic
     # it triggers a live provider fetch (up to 8s) that blocks the HTTP response
     # to the browser, causing a visible freeze on every Settings save (#895).
     invalidate_models_cache()
-    return {"ok": True, "model": persisted_model}
+    return {"ok": True, "model": persisted_model, "provider": persisted_provider or None}
 
 
 # ── Auxiliary model configuration ──────────────────────────────────────────
@@ -3650,7 +3895,7 @@ def get_auxiliary_models() -> dict:
             {"task": "vision", "provider": "auto", "model": "", "base_url": ""},
             ...
         ],
-        "main": {"provider": "openrouter", "model": "anthropic/claude-opus-4.7"},
+        "main": {"provider": "openrouter", "model": "anthropic/claude-opus-4.7", "service_tier": ""},
     }
     """
     reload_config()
@@ -3686,6 +3931,7 @@ def get_auxiliary_models() -> dict:
         "main": {
             "provider": main_provider,
             "model": main_model,
+            "service_tier": _public_main_service_tier(model_cfg),
             **_public_advanced_model_options(model_cfg),
         },
     }
@@ -3771,6 +4017,7 @@ def set_auxiliary_model(task: str, provider: str, model: str, advanced: dict | N
 # ── TTL cache for get_available_models() ─────────────────────────────────────
 _available_models_cache: dict | None = None
 _available_models_cache_ts: float = 0.0
+_available_models_live_rebuild_ts: float = 0.0
 _available_models_cache_source_fingerprint: dict | None = None
 _AVAILABLE_MODELS_CACHE_TTL: float = 86400.0  # 24 hours
 _SESSION_VISIT_MODELS_FRESHNESS_SECONDS: float = 300.0
@@ -5023,7 +5270,8 @@ def _save_models_cache_to_disk(cache: dict) -> None:
 
 def _get_fresh_memory_models_cache(now: float) -> dict | None:
     """Return a valid fresh in-memory /api/models cache, or clear stale shapes."""
-    global _available_models_cache, _available_models_cache_ts, _available_models_cache_source_fingerprint
+    global _available_models_cache, _available_models_cache_ts
+    global _available_models_live_rebuild_ts, _available_models_cache_source_fingerprint
     if _available_models_cache is None:
         return None
     if (now - _available_models_cache_ts) >= _AVAILABLE_MODELS_CACHE_TTL:
@@ -5037,12 +5285,14 @@ def _get_fresh_memory_models_cache(now: float) -> dict | None:
         )
         _available_models_cache = None
         _available_models_cache_ts = 0.0
+        _available_models_live_rebuild_ts = 0.0
         _available_models_cache_source_fingerprint = None
         return None
     if _is_valid_models_cache(_available_models_cache):
         return copy.deepcopy(_available_models_cache)
     _available_models_cache = None
     _available_models_cache_ts = 0.0
+    _available_models_live_rebuild_ts = 0.0
     _available_models_cache_source_fingerprint = None
     return None
 
@@ -5061,10 +5311,12 @@ def invalidate_models_cache():
     result from the disk cache because the disk hit is checked before the memory
     cache rebuild runs.
     """
-    global _cache_build_in_progress, _available_models_cache, _available_models_cache_ts, _available_models_cache_source_fingerprint, _cache_build_cv
+    global _cache_build_in_progress, _available_models_cache, _available_models_cache_ts
+    global _available_models_live_rebuild_ts, _available_models_cache_source_fingerprint, _cache_build_cv
     with _available_models_cache_lock:
         _available_models_cache = None
         _available_models_cache_ts = 0.0
+        _available_models_live_rebuild_ts = 0.0
         _available_models_cache_source_fingerprint = None
         _cache_build_in_progress = False
         _cache_build_cv.notify_all()
@@ -5118,10 +5370,12 @@ def invalidate_provider_models_cache(provider_id: str):
     Args:
         provider_id: canonical provider id (e.g. 'openai', 'anthropic', 'custom:my-key')
     """
-    global _available_models_cache, _available_models_cache_ts, _available_models_cache_source_fingerprint, _CREDENTIAL_POOL_CACHE
+    global _available_models_cache, _available_models_cache_ts
+    global _available_models_live_rebuild_ts, _available_models_cache_source_fingerprint, _CREDENTIAL_POOL_CACHE
     with _available_models_cache_lock:
         _available_models_cache = None
         _available_models_cache_ts = 0.0
+        _available_models_live_rebuild_ts = 0.0
         _available_models_cache_source_fingerprint = None
         _provider_models_invalidated_ts[provider_id] = time.time()
         # Also evict the credential pool so the next cold path re-loads it.
@@ -5299,7 +5553,8 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
     checks that need a real live rebuild while preserving the default cache
     contract for every existing caller.
     """
-    global _cache_build_in_progress, _available_models_cache, _available_models_cache_ts, _available_models_cache_source_fingerprint, _cache_build_cv
+    global _cache_build_in_progress, _available_models_cache, _available_models_cache_ts
+    global _available_models_live_rebuild_ts, _available_models_cache_source_fingerprint, _cache_build_cv
     # Config mtime check — must come before any config reads.
     # (Test #585 verifies _current_mtime appears before active_provider = None)
     try:
@@ -5312,7 +5567,7 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
         (_current_mtime != _cfg_mtime or _current_path != _cfg_path)
         and not _cfg_has_in_memory_overrides()
     ):
-        reload_config()
+        reload_config_if_stale()
     # ── COLD PATH helper ─────────────────────────────────────────────────────
     # Extracted so it runs inside _available_models_cache_lock (RLock) to
     # prevent thundering-herd: only one thread rebuilds while others wait.
@@ -5599,8 +5854,9 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                 except Exception:
                     logger.debug("Failed to parse hermes env file")
             all_env = {**env_keys}
+            _anthropic_env_vars = _get_anthropic_fallback_env_vars()
             for k in (
-                "ANTHROPIC_API_KEY",
+                *_anthropic_env_vars,
                 "OPENAI_API_KEY",
                 "OPENROUTER_API_KEY",
                 "GOOGLE_API_KEY",
@@ -5619,10 +5875,10 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                 "AWS_ACCESS_KEY_ID",
                 "AWS_SECRET_ACCESS_KEY",
             ):
-                val = _thread_local_env_value(k)
+                val = _thread_local_env_value(k).strip()
                 if val:
                     all_env[k] = val
-            if all_env.get("ANTHROPIC_API_KEY"):
+            if any(all_env.get(env_var) for env_var in _anthropic_env_vars):
                 detected_providers.add("anthropic")
             if all_env.get("OPENAI_API_KEY"):
                 # hermes-agent registers its OPENAI_API_KEY/OPENAI_BASE_URL provider
@@ -6710,6 +6966,7 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
     # If another thread has already started the cold path, we will wait for
     # its result rather than running the cold path concurrently.
     should_wait = _cache_build_in_progress
+    force_refresh_started_at = time.monotonic() if force_refresh else None
 
     # Check config mtime OUTSIDE the lock so this cheap check doesn't serialize
     # concurrent requests.  Must come before any config reads in the cold path.
@@ -6735,29 +6992,91 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
         # If another thread is already building, wait for its result instead
         # of re-entering the cold path (avoids duplicate 10s zai load_pool calls).
         if should_wait:
+            wait_timeout = 60.0
+            if force_refresh and force_refresh_started_at is not None:
+                if _LIVE_REBUILD_BUDGET_SECONDS <= 0:
+                    # The legacy synchronous path is explicitly unbounded. A
+                    # forced refresh follower should keep coalescing behind
+                    # that live rebuild instead of giving up after 60s and
+                    # duplicating it.
+                    wait_timeout = None
+                else:
+                    wait_timeout = max(
+                        0.0,
+                        _LIVE_REBUILD_BUDGET_SECONDS - (time.monotonic() - force_refresh_started_at),
+                    )
             _cache_build_cv.wait_for(
-                lambda: not _cache_build_in_progress and _available_models_cache is not None,
-                timeout=60
+                lambda: not _cache_build_in_progress,
+                timeout=wait_timeout
             )
             cached = _get_fresh_memory_models_cache(time.monotonic())
-            if cached is not None:
+            if (
+                cached is not None
+                and (
+                    not force_refresh
+                    or (
+                        force_refresh_started_at is not None
+                        and _available_models_live_rebuild_ts >= force_refresh_started_at
+                    )
+                )
+            ):
                 return cached
+            if force_refresh and _LIVE_REBUILD_BUDGET_SECONDS > 0 and _cache_build_in_progress:
+                if stale_disk_groups is not None:
+                    return copy.deepcopy(stale_disk_groups)
+                return copy.deepcopy(_static_models_catalog_without_live_probes())
 
         # Reload config if changed
         if _cfg_changed:
             reload_config()
             _available_models_cache = None
             _available_models_cache_ts = 0.0
+            _available_models_live_rebuild_ts = 0.0
             _available_models_cache_source_fingerprint = None
             disk_groups = None
             stale_disk_groups = None
 
         # Serve from memory cache if fresh
         now = time.monotonic()
-        if not force_refresh:
-            cached = _get_fresh_memory_models_cache(now)
-            if cached is not None:
+        cached = _get_fresh_memory_models_cache(now)
+        if cached is not None:
+            if not force_refresh:
                 return cached
+            if (
+                force_refresh_started_at is not None
+                and _available_models_live_rebuild_ts >= force_refresh_started_at
+            ):
+                return cached
+
+        # A concurrent forced refresh may have started after this caller sampled
+        # should_wait but before it acquired the lock. Reuse that in-flight build
+        # instead of launching another one, and preserve this caller's budget.
+        if (
+            force_refresh
+            and force_refresh_started_at is not None
+            and _cache_build_in_progress
+        ):
+            remaining_budget = None
+            if _LIVE_REBUILD_BUDGET_SECONDS > 0:
+                remaining_budget = max(
+                    0.0,
+                    _LIVE_REBUILD_BUDGET_SECONDS - (time.monotonic() - force_refresh_started_at),
+                )
+            if remaining_budget is None or remaining_budget > 0:
+                _cache_build_cv.wait_for(
+                    lambda: not _cache_build_in_progress,
+                    timeout=remaining_budget,
+                )
+                cached = _get_fresh_memory_models_cache(time.monotonic())
+                if (
+                    cached is not None
+                    and _available_models_live_rebuild_ts >= force_refresh_started_at
+                ):
+                    return cached
+            if _cache_build_in_progress and _LIVE_REBUILD_BUDGET_SECONDS > 0:
+                if stale_disk_groups is not None:
+                    return copy.deepcopy(stale_disk_groups)
+                return copy.deepcopy(_static_models_catalog_without_live_probes())
 
         # Cold path: disk cache hit — use it (fast, no lock contention)
         if disk_groups is not None and not force_refresh:
@@ -6835,8 +7154,10 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                     _cache_build_cv.notify_all()
                 raise
             with _cache_build_cv:
+                published_at = time.monotonic()
                 _available_models_cache = result
-                _available_models_cache_ts = time.monotonic()
+                _available_models_cache_ts = published_at
+                _available_models_live_rebuild_ts = published_at
                 _available_models_cache_source_fingerprint = _models_cache_source_fingerprint()
             try:
                 _save_models_cache_to_disk(result)
@@ -6877,10 +7198,13 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
 
         def _publish_models_result(result):
             global _cache_build_in_progress, _available_models_cache
-            global _available_models_cache_ts, _available_models_cache_source_fingerprint
+            global _available_models_cache_ts, _available_models_live_rebuild_ts
+            global _available_models_cache_source_fingerprint
             with _cache_build_cv:
+                published_at = time.monotonic()
                 _available_models_cache = result
-                _available_models_cache_ts = time.monotonic()
+                _available_models_cache_ts = published_at
+                _available_models_live_rebuild_ts = published_at
                 _available_models_cache_source_fingerprint = (
                     _models_cache_source_fingerprint()
                 )
@@ -7116,6 +7440,10 @@ def create_stream_channel() -> StreamChannel:
 
 STREAMS: dict = {}
 STREAMS_LOCK = threading.Lock()
+# stream_id -> session_id owner, populated synchronously before worker startup so
+# stream-id authorization does not depend on worker lifecycle registration.
+STREAM_SESSION_OWNERS: dict = {}
+STREAM_SESSION_OWNERS_LOCK = threading.Lock()
 CANCEL_FLAGS: dict = {}
 AGENT_INSTANCES: dict = {}  # stream_id -> AIAgent instance for interrupt propagation
 STREAM_PARTIAL_TEXT: dict = {}  # stream_id -> partial assistant text accumulated during streaming
@@ -7125,6 +7453,37 @@ STREAM_GOAL_RELATED: dict = {}  # stream_id -> bool: only evaluate goal for goal
 STREAM_LAST_EVENT_ID: dict = {}  # stream_id -> latest journal event_id for `id:` field on live SSE frames (stage-364)
 PENDING_GOAL_CONTINUATION: set = set()  # session_ids awaiting a goal continuation turn (#1932)
 
+
+def register_stream_owner(stream_id: str, session_id: str) -> None:
+    """Record the session that owns a stream before worker startup."""
+    stream_id = str(stream_id or "").strip()
+    session_id = str(session_id or "").strip()
+    if not stream_id or not session_id:
+        return
+    with STREAM_SESSION_OWNERS_LOCK:
+        STREAM_SESSION_OWNERS[stream_id] = session_id
+
+
+def stream_owner_session_id(stream_id: str) -> str | None:
+    """Return the synchronously-recorded owner session for a stream, if any."""
+    stream_id = str(stream_id or "").strip()
+    if not stream_id:
+        return None
+    with STREAM_SESSION_OWNERS_LOCK:
+        owner = STREAM_SESSION_OWNERS.get(stream_id)
+    owner = str(owner or "").strip()
+    return owner or None
+
+
+def unregister_stream_owner(stream_id: str) -> None:
+    """Forget the pre-worker stream owner once the stream has torn down."""
+    stream_id = str(stream_id or "").strip()
+    if not stream_id:
+        return
+    with STREAM_SESSION_OWNERS_LOCK:
+        STREAM_SESSION_OWNERS.pop(stream_id, None)
+
+
 # ── Gateway capability cache ─────────────────────────────────────────────────
 # Probes /v1/capabilities once per base_url/api-key pair and caches the result
 # for 60 s so guarded-turn routing decisions do not add latency on every chat
@@ -7132,6 +7491,15 @@ PENDING_GOAL_CONTINUATION: set = set()  # session_ids awaiting a goal continuati
 _GATEWAY_CAPS_CACHE: dict[tuple[str, str], dict] = {}
 _GATEWAY_CAPS_LOCK = threading.Lock()
 _GATEWAY_CAPS_TTL_S: float = 60.0
+
+
+def _gateway_caps_probe_timed_out(exc: BaseException) -> bool:
+    """Keep slow capability probes on the legacy reachable-but-unsupported path."""
+    reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return True
+    reason_text = str(reason).lower()
+    return "timed out" in reason_text or "timeout" in reason_text
 
 
 def get_gateway_caps(base_url: str, api_key: str = "") -> dict:
@@ -7144,21 +7512,40 @@ def get_gateway_caps(base_url: str, api_key: str = "") -> dict:
         cached = _GATEWAY_CAPS_CACHE.get(cache_key)
         if cached and now - cached.get("fetched_at", 0) < _GATEWAY_CAPS_TTL_S:
             return cached
-    caps = {"approval_events": False, "run_approval_response": False, "fetched_at": 0.0}
+    caps = {
+        "approval_events": False,
+        "run_approval_response": False,
+        "capabilities_reachable": False,
+        "probe_error": None,
+        "fetched_at": 0.0,
+    }
     try:
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         req = urllib.request.Request(f"{base_url}/v1/capabilities", headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=3) as resp:
+            caps["capabilities_reachable"] = True
             body = json.loads(resp.read(65536))
         features = body.get("features") if isinstance(body, dict) else {}
         if not isinstance(features, dict):
             features = {}
         caps["approval_events"] = bool(features.get("approval_events"))
         caps["run_approval_response"] = bool(features.get("run_approval_response"))
-    except Exception:
-        pass
+    except urllib.error.HTTPError as exc:
+        caps["capabilities_reachable"] = True
+        caps["probe_error"] = f"{type(exc).__name__}: {exc}"
+    except urllib.error.URLError as exc:
+        if _gateway_caps_probe_timed_out(exc):
+            caps["capabilities_reachable"] = True
+        caps["probe_error"] = f"{type(exc).__name__}: {exc}"
+    except (TimeoutError, socket.timeout) as exc:
+        caps["capabilities_reachable"] = True
+        caps["probe_error"] = f"{type(exc).__name__}: {exc}"
+    except OSError as exc:
+        caps["probe_error"] = f"{type(exc).__name__}: {exc}"
+    except Exception as exc:
+        caps["probe_error"] = f"{type(exc).__name__}: {exc}"
     with _GATEWAY_CAPS_LOCK:
         current = _GATEWAY_CAPS_CACHE.get(cache_key)
         if current and current.get("fetched_at", 0) > probe_started_at:
@@ -7166,6 +7553,16 @@ def get_gateway_caps(base_url: str, api_key: str = "") -> dict:
         caps["fetched_at"] = time.time()
         _GATEWAY_CAPS_CACHE[cache_key] = caps
     return caps
+
+
+def gateway_approval_unavailable_reason(base_url: str, api_key: str = "") -> str | None:
+    """Return why approval support is unavailable, if it is unavailable."""
+    caps = get_gateway_caps(base_url, api_key)
+    if bool(caps.get("approval_events") and caps.get("run_approval_response")):
+        return None
+    if not caps.get("capabilities_reachable"):
+        return "unreachable"
+    return "unsupported"
 
 
 def gateway_supports_approval(base_url: str, api_key: str = "") -> bool:
@@ -7295,6 +7692,7 @@ def unregister_active_run(stream_id: str) -> None:
     with ACTIVE_RUNS_LOCK:
         ACTIVE_RUNS.pop(stream_id, None)
         LAST_RUN_FINISHED_AT = time.time()
+    unregister_stream_owner(stream_id)
 
 
 def _prune_bg_task_complete_seen(session_id: str | None = None) -> int:
@@ -7609,6 +8007,25 @@ def _evict_session_agent(session_id: str) -> None:
         if entry is not None:
             agent = entry[0] if isinstance(entry, tuple) else None
     if agent is None:
+        return
+    # A live run for this session may still hold this agent's _session_db (the
+    # worker assigns agent._session_db at run start). Never close it out from
+    # under an in-flight turn — ACTIVE_RUNS is the authoritative liveness signal
+    # (mirrors the worker's own LRU-eviction guard in streaming.py). When a run
+    # is live we still drop the cache handle above (harmless — the worker holds
+    # a local ref), but skip the lifecycle commit + _session_db.close() so the
+    # running turn can finish persisting. Hardens /clear + model-switch eviction
+    # too, not just truncate (#5096 Bug D).
+    _run_active = False
+    try:
+        with ACTIVE_RUNS_LOCK:
+            for _entry in (ACTIVE_RUNS or {}).values():
+                if (_entry or {}).get("session_id") == session_id:
+                    _run_active = True
+                    break
+    except Exception:
+        _run_active = False
+    if _run_active:
         return
     should_close = True
     try:

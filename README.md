@@ -145,6 +145,20 @@ For self-hosted VM or homelab installs, `ctl.sh` wraps the common daemon lifecyc
 >
 > `./ctl.sh stop` cannot stop a server launched by `bootstrap.py` or `start.sh` directly — it only manages processes it started itself.
 
+> **How chat runs by default.** WebUI runs the Hermes agent in-process, reading
+> your `HERMES_HOME` config directly. It does not connect to an external
+> Hermes/agent OpenAI-compatible API server to run chat. `HERMES_API_URL` is only
+> read by the Tasks/cron health probe and does not route chat.
+>
+> Two options if you run an external endpoint:
+>
+> 1. **Use its models as a chat provider** (supported today): add it in
+>    **Settings → Providers** as a custom OpenAI-compatible provider with
+>    `base_url = http://127.0.0.1:8642/v1` and your bearer token.
+> 2. **Route chat through a Hermes Gateway API server** (supported today via
+>    `HERMES_WEBUI_CHAT_BACKEND=gateway`): see [`docs/advanced-chat-setup.md`](docs/advanced-chat-setup.md).
+>    Full agent-loop delegation is not yet shipped; tracked in [#1925](https://github.com/nesquena/hermes-webui/issues/1925).
+
 ### Advanced: dynamic recall prefill & Gateway-backed chat
 
 Two optional, self-hosted-deployment features — attaching dynamic **session-recall prefill** to browser turns (Joplin/Obsidian/Notion/llm-wiki routers), and routing browser chat through a running **Hermes Gateway** — are documented in [`docs/advanced-chat-setup.md`](docs/advanced-chat-setup.md). Most users need neither.
@@ -623,24 +637,24 @@ The WebUI is still coupled to Hermes Agent internals for runtime execution, prov
 Hermes WebUI is built with help from the open-source community. Every PR — whether merged directly, absorbed into a batch release, or salvaged from a larger proposal — shapes the project, and we're grateful to everyone who has taken the time to contribute.
 
 <!-- BEGIN GENERATED CONTRIBUTORS -->
-Over **288 contributors** have shipped code that landed in a release tag. The full, continuously-updated credit roll — including everyone with one or two PRs and the special-thanks roll for design and architectural work — lives in [`CONTRIBUTORS.md`](CONTRIBUTORS.md). A snapshot of the most prolific contributors:
+Over **304 contributors** have shipped code that landed in a release tag. The full, continuously-updated credit roll — including everyone with one or two PRs and the special-thanks roll for design and architectural work — lives in [`CONTRIBUTORS.md`](CONTRIBUTORS.md). A snapshot of the most prolific contributors:
 
 ### Top contributors (by PR count, including absorbed/batch-released work)
 
 | # | Contributor | PRs | First → latest release |
 |---|---|---:|---|
-| 1 | [@franksong2702](https://github.com/franksong2702) | 264 | `v0.49.3` → `v0.51.587` |
-| 2 | [@rodboev](https://github.com/rodboev) | 204 | `v0.51.223` → `v0.51.586` |
+| 1 | [@franksong2702](https://github.com/franksong2702) | 289 | `v0.49.3` → `v0.51.721` |
+| 2 | [@rodboev](https://github.com/rodboev) | 265 | `v0.51.223` → `v0.51.731` |
 | 3 | [@Michaelyklam](https://github.com/Michaelyklam) | 157 | `v0.50.240` → `v0.51.198` |
 | 4 | [@ai-ag2026](https://github.com/ai-ag2026) | 116 | `v0.50.279` → `v0.51.519` |
 | 5 | [@bergeouss](https://github.com/bergeouss) | 80 | `v0.48.0` → `v0.51.527` |
 | 6 | [@AJV20](https://github.com/AJV20) | 57 | `v0.51.93` → `v0.51.346` |
 | 7 | [@dso2ng](https://github.com/dso2ng) | 43 | `v0.50.227` → `v0.51.578` |
 | 8 | [@Sanjays2402](https://github.com/Sanjays2402) | 27 | `v0.50.292` → `v0.51.484` |
-| 9 | [@starship-s](https://github.com/starship-s) | 25 | `v0.50.123` → `v0.51.547` |
+| 9 | [@starship-s](https://github.com/starship-s) | 27 | `v0.50.123` → `v0.51.638` |
 | 10 | [@Hinotoi-agent](https://github.com/Hinotoi-agent) | 23 | `v0.50.10` → `v0.51.522` |
 
-See [`CONTRIBUTORS.md`](CONTRIBUTORS.md) for the full ranked list of all 288 contributors — the 3+ PR tables, the 1–2 PR roll, and the special-thanks notes for design and architectural contributions.
+See [`CONTRIBUTORS.md`](CONTRIBUTORS.md) for the full ranked list of all 304 contributors — the 3+ PR tables, the 1–2 PR roll, and the special-thanks notes for design and architectural contributions.
 <!-- END GENERATED CONTRIBUTORS -->
 
 ### Notable contributions
