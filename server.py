@@ -109,9 +109,10 @@ from api.helpers import (
     _CLIENT_DISCONNECT_ERRORS,
 )
 from api.profiles import set_request_profile, clear_request_profile
-from api.routes import handle_delete, handle_get, handle_patch, handle_post, handle_put
+from api.routes import handle_delete, handle_get, handle_patch, handle_post, handle_put, apply_cors_preflight_headers
 from api.startup import auto_install_agent_deps, fix_credential_permissions
 from api.updates import WEBUI_VERSION
+from api.crash_visibility import install_crash_visibility
 
 
 class QuietHTTPServer(ThreadingHTTPServer):
@@ -434,12 +435,13 @@ class Handler(BaseHTTPRequestHandler):
         self._handle_write(handle_patch)
 
     def do_OPTIONS(self) -> None:
-        """Handle CORS preflight requests."""
+        """Handle CORS preflight requests (headers emitted by api.routes)."""
         self._req_t0 = time.time()
         self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        apply_cors_preflight_headers(self)
+        # Frame the empty preflight: without Content-Length an HTTP/1.1 keep-alive
+        # 200 is read-until-close, hanging the client until the 30s timeout.
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_DELETE(self) -> None:
@@ -546,6 +548,12 @@ def _abort_if_already_serving(host: str, port: int) -> None:
 def main() -> None:
     from api.config import print_startup_config, verify_hermes_imports, _HERMES_FOUND
 
+    # Crash visibility FIRST (issue #4633): enable faulthandler + excepthooks +
+    # exit audit before any heavy startup work so a native crash or a daemon /
+    # handler-thread exception during startup or serving produces a diagnostic
+    # instead of a silent death. The paired memory root-cause is #4765.
+    install_crash_visibility()
+
     print_startup_config()
 
     fd_limit = _raise_fd_soft_limit()
@@ -584,7 +592,8 @@ def main() -> None:
     if within_container:
         print('[ok] Running within container.', flush=True)
 
-    from api.auth import is_auth_enabled
+    # Security: warn if binding non-loopback without authentication
+    from api.auth import get_oidc_startup_warning, is_auth_enabled
     if HOST not in ('127.0.0.1', '::1', 'localhost') and not is_auth_enabled():
         print(f'[!!] WARNING: Binding to {HOST} with NO PASSWORD SET.', flush=True)
         print(f'     Anyone on the network can access your filesystem and agent.', flush=True)
@@ -596,6 +605,10 @@ def main() -> None:
         print(f'  [tip] No password set. Any process on this machine can read sessions', flush=True)
         print(f'        and memory via the local API. Set HERMES_WEBUI_PASSWORD to', flush=True)
         print(f'        enable authentication.', flush=True)
+
+    oidc_startup_warning = get_oidc_startup_warning()
+    if oidc_startup_warning:
+        print(f'[!!] WARNING: {oidc_startup_warning}', flush=True)
 
     ok, missing, errors = verify_hermes_imports()
     if not ok and _HERMES_FOUND:
@@ -685,6 +698,36 @@ def main() -> None:
         print(f'  Remote access: ssh -N -L {PORT}:127.0.0.1:{PORT} <user>@<your-server>', flush=True)
     print(f'  Then open:     {scheme}://localhost:{PORT}', flush=True)
     print('', flush=True)
+
+    # ctl.sh stops the WebUI with SIGTERM. Python's default SIGTERM handler
+    # terminates the process WITHOUT unwinding the try/finally around
+    # serve_forever(), so drain_all_on_shutdown() (which flushes in-flight
+    # fire-and-forget memory commits) would never run on the normal managed
+    # stop. Install a handler that requests an orderly shutdown so
+    # serve_forever() returns and the existing `finally` block drains cleanly.
+    #
+    # httpd.shutdown() blocks until serve_forever() has exited and MUST NOT be
+    # called from the thread running serve_forever() (it would deadlock), so we
+    # dispatch it from a short-lived helper thread. The handler is idempotent
+    # and guards against double-shutdown (e.g. repeated SIGTERM/SIGINT).
+    _shutdown_requested = threading.Event()
+
+    def _request_shutdown(signum, _frame):
+        if _shutdown_requested.is_set():
+            return
+        _shutdown_requested.set()
+        threading.Thread(
+            target=httpd.shutdown,
+            name="webui-sigterm-shutdown",
+            daemon=True,
+        ).start()
+
+    try:
+        signal.signal(signal.SIGTERM, _request_shutdown)
+    except (ValueError, OSError):
+        # Not on the main thread (e.g. embedded/test harness); skip handler.
+        logger.debug("Could not install SIGTERM handler", exc_info=True)
+
     try:
         httpd.serve_forever()
     finally:

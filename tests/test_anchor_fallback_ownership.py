@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -45,13 +46,19 @@ def _run_node_script(script: str) -> str:
     if not node:
         pytest.skip("node executable is required for JavaScript behavior checks")
     try:
-        result = subprocess.run(
-            [node, "-e", script],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            timeout=10,
-        )
+        with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8", delete=False) as handle:
+            handle.write(script)
+            script_path = handle.name
+        try:
+            result = subprocess.run(
+                [node, script_path],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                timeout=10,
+            )
+        finally:
+            Path(script_path).unlink(missing_ok=True)
     except subprocess.TimeoutExpired as exc:
         pytest.fail(
             "node behavior check timed out"
@@ -604,6 +611,7 @@ def test_render_messages_keeps_anchor_owned_turn_out_of_legacy_activity_rebuilds
           return turn;
         }}
         function _assistantTurnBlocks(turn) {{ return turn ? turn.querySelector('.assistant-turn-blocks') : null; }}
+        function _setLatestAssistantTurnLandmark() {{}}
         function _assistantRoleHtml() {{ return ''; }}
         function _userMessageDomId(rawIdx) {{ return `user-${{rawIdx}}`; }}
         function _messageSessionIndexForRawIdx(rawIdx) {{ return rawIdx; }}
@@ -668,6 +676,7 @@ def test_render_messages_keeps_anchor_owned_turn_out_of_legacy_activity_rebuilds
         function _maybeRecoverVirtualizedBlankViewport() {{ return false; }}
         function _updateMessageVirtualMeasurements() {{}}
         function postProcessRenderedMessages() {{}}
+        function _postProcessWithAnchorSuppression() {{}}
         function _formatGatewayModelLabel() {{ return ''; }}
         function _gatewayRoutingFailoverText() {{ return ''; }}
         function _gatewayModelWarningText() {{ return ''; }}
@@ -918,4 +927,5 @@ def test_anchor_settled_renderers_remain_the_primary_scene_path():
 
     assert "if(!message||!message._anchor_activity_scene||!segment) return false;" in transparent
     assert "_anchorSceneRowsForRendering(scene,{settled:true})" in transparent
-    assert "_anchorSceneTransparentNodeForRow(row,{settled:true,finalAnswer})" in transparent
+    assert "const lastNonTerminalWorkRowIndex=_anchorSceneLastNonTerminalWorkRowIndex(rows);" in transparent
+    assert "liveTokenFinalPrefixEligible:idx>lastNonTerminalWorkRowIndex" in transparent

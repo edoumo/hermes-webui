@@ -4,9 +4,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MESSAGES_SRC = (ROOT / "static" / "messages.js").read_text()
-SESSIONS_SRC = (ROOT / "static" / "sessions.js").read_text()
-UI_SRC = (ROOT / "static" / "ui.js").read_text()
+MESSAGES_SRC = (ROOT / "static" / "messages.js").read_text(encoding="utf-8")
+SESSIONS_SRC = (ROOT / "static" / "sessions.js").read_text(encoding="utf-8")
+UI_SRC = (ROOT / "static" / "ui.js").read_text(encoding="utf-8")
 
 
 def _function_body(src: str, signature: str) -> str:
@@ -213,7 +213,11 @@ process.stdout.write(JSON.stringify({{
 
 def test_reattach_path_uses_replay_when_status_reports_journal():
     reattach_pos = MESSAGES_SRC.index("let replayOnly=false;")
-    block = MESSAGES_SRC[reattach_pos : reattach_pos + 1200]
+    # Window widened to 2200: the SSE-recovery follow-restore fix (the
+    # _wasFollowingAtReconnectDead guard + its sticky-unpin check) inserted lines
+    # into the reconnect-dead cleanup block between this anchor and the
+    # replay-params assertion below, pushing the target string past the old slice.
+    block = MESSAGES_SRC[reattach_pos : reattach_pos + 2200]
 
     assert "st.replay_available" in block
     assert "replayOnly=true" in block

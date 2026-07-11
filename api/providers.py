@@ -34,6 +34,7 @@ except ImportError:  # pragma: no cover - exercised only where fcntl is unavaila
 from api.config import (
     _PROVIDER_DISPLAY,
     _PROVIDER_MODELS,
+    _coerce_provider_cost_budget,
     _custom_provider_slug_from_name,
     _get_label_for_model,
     _models_from_live_provider_ids,
@@ -744,6 +745,8 @@ _PROVIDER_ENV_VAR_ALIASES: dict[str, tuple[str, ...]] = {
     "opencode-go": ("OPENCODE_API_KEY",),
 }
 
+_SELF_HOSTED_PROVIDER_IDS = frozenset({"ollama", "lmstudio"})
+
 
 def _provider_credential_env_vars() -> tuple[str, ...]:
     names = {name for name in _PROVIDER_ENV_VAR.values() if name}
@@ -1300,6 +1303,110 @@ def _get_provider_api_key(provider_id: str) -> str | None:
         if key:
             return key
     return None
+
+
+def provider_has_usable_credential(provider_id: str, *, refresh: bool = False) -> bool:
+    """Return True when a provider has a currently usable configured credential."""
+    provider = str(provider_id or "").strip().lower()
+    if not provider:
+        return False
+    if refresh:
+        try:
+            from api.config import invalidate_credential_pool_cache
+
+            invalidate_credential_pool_cache(provider)
+        except Exception:
+            logger.debug("Failed to refresh credential pool before provider availability check", exc_info=True)
+    return _get_provider_api_key(provider) is not None
+
+
+def provider_has_usable_pool_credential(provider_id: str, *, refresh: bool = False) -> bool:
+    """Return True only when the provider's credential-pool lane has a usable entry."""
+    provider = str(provider_id or "").strip().lower()
+    if not provider:
+        return False
+    if refresh:
+        try:
+            from api.config import invalidate_credential_pool_cache
+
+            invalidate_credential_pool_cache(provider)
+        except Exception:
+            logger.debug("Failed to refresh credential pool before pool availability check", exc_info=True)
+    for entry in _pool_entry_payloads(provider):
+        status = str(entry.get("last_status") or "").strip().lower()
+        if status == "dead":
+            continue
+        if status == "exhausted":
+            ns = SimpleNamespace(**entry)
+            if _entry_is_pool_exhausted(ns):
+                continue
+        key = str(
+            entry.get("runtime_api_key")
+            or entry.get("agent_key")
+            or entry.get("access_token")
+            or ""
+        ).strip()
+        if key:
+            return True
+    return False
+
+
+def _credential_secret_fingerprint(secret: str) -> str:
+    value = str(secret or "").strip()
+    if not value:
+        return ""
+    return hashlib.sha256(value.encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+def _entry_secret_fingerprint(entry: dict) -> str:
+    value = str(entry.get("secret_fingerprint") or "").strip().lower()
+    if value.startswith("sha256:"):
+        value = value[len("sha256:"):]
+    if not value:
+        return ""
+    if all(ch in "0123456789abcdef" for ch in value):
+        return value[:16]
+    return ""
+
+
+def _pool_entry_currently_unusable(entry: dict) -> bool:
+    status = str(entry.get("last_status") or "").strip().lower()
+    if status == "dead":
+        return True
+    if status == "exhausted":
+        ns = SimpleNamespace(**entry)
+        return _entry_is_pool_exhausted(ns)
+    return False
+
+
+def provider_has_process_wakeup_recovery_credential(provider_id: str, *, refresh: bool = False) -> bool:
+    """Return True when a paused credential-pool wakeup lane can safely retry."""
+    provider = str(provider_id or "").strip().lower()
+    if not provider:
+        return False
+    if provider_has_usable_pool_credential(provider, refresh=refresh):
+        return True
+    configured_key = _get_provider_api_key(provider)
+    if not configured_key:
+        return False
+    configured_fingerprint = _credential_secret_fingerprint(configured_key)
+    if not configured_fingerprint:
+        return False
+    has_unusable_pool_entry = False
+    has_unknown_unusable_pool_entry = False
+    for entry in _pool_entry_payloads(provider):
+        entry_fingerprint = _entry_secret_fingerprint(entry)
+        if not _pool_entry_currently_unusable(entry):
+            if entry_fingerprint and entry_fingerprint == configured_fingerprint:
+                return True
+            continue
+        has_unusable_pool_entry = True
+        if not entry_fingerprint:
+            has_unknown_unusable_pool_entry = True
+            continue
+        if entry_fingerprint == configured_fingerprint:
+            return False
+    return has_unusable_pool_entry and not has_unknown_unusable_pool_entry
 
 
 def _active_provider_id() -> str | None:
@@ -2051,6 +2158,16 @@ _COST_SNAPSHOT_MAX_DAYS = 365  # hard cap to prevent unbounded growth
 _COST_SNAPSHOT_LOCK = threading.Lock()
 
 
+def _get_provider_cost_budget() -> float | None:
+    """Return the user-configured monthly spend budget, or None if unset."""
+    try:
+        from api.config import load_settings
+        raw = load_settings().get("provider_cost_budget")
+        return _coerce_provider_cost_budget(raw)
+    except Exception:
+        return None
+
+
 def _cost_snapshots_dir() -> Path:
     """Return the directory for cost-snapshot JSON files.
 
@@ -2270,6 +2387,7 @@ def get_provider_cost_history(provider_id: str | None = None, days: int = 7) -> 
         }
 
     display_name = _PROVIDER_DISPLAY.get("openrouter", "OpenRouter")
+    monthly_budget = _get_provider_cost_budget()
     api_key = _get_provider_api_key("openrouter")
     if not api_key:
         return {
@@ -2278,6 +2396,7 @@ def get_provider_cost_history(provider_id: str | None = None, days: int = 7) -> 
             "display_name": display_name,
             "supported": True,
             "status": "no_key",
+            "monthly_budget": monthly_budget,
             "message": "OpenRouter cost history needs an OPENROUTER_API_KEY configured on the server.",
         }
 
@@ -2298,6 +2417,7 @@ def get_provider_cost_history(provider_id: str | None = None, days: int = 7) -> 
             "snapshots": deltas,
             "limit": None,
             "label": None,
+            "monthly_budget": monthly_budget,
             "message": "OpenRouter cost history is temporarily unavailable. Showing last known data.",
         }
 
@@ -2319,6 +2439,7 @@ def get_provider_cost_history(provider_id: str | None = None, days: int = 7) -> 
         "snapshots": deltas,
         "limit": key_info.get("limit"),
         "label": key_info.get("label") or "OpenRouter credits",
+        "monthly_budget": monthly_budget,
         "message": "OpenRouter cost history loaded.",
     }
 
@@ -2569,12 +2690,20 @@ def get_providers() -> dict[str, Any]:
                 if pid != "nous":
                     models_total = len(models)
 
+        is_self_hosted = pid in _SELF_HOSTED_PROVIDER_IDS
+        try:
+            from api.config import _get_provider_base_url
+            provider_base_url = _get_provider_base_url(pid) if is_self_hosted else None
+        except Exception:
+            provider_base_url = None
         _is_plugin = is_plugin_model_provider(pid)
         providers.append({
             "id": pid,
             "display_name": display_name,
             "has_key": has_key,
             "configurable": not is_oauth and bool(_provider_env_var_for(pid)),
+            "is_self_hosted": is_self_hosted,
+            "base_url": provider_base_url,
             "is_plugin_provider": _is_plugin,
             "is_oauth": is_oauth,
             "key_source": key_source,

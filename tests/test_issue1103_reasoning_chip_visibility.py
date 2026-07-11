@@ -45,8 +45,8 @@ def test_reasoning_chip_html_starts_hidden():
         src
     )
     assert m, "composerReasoningWrap must start with style='display:none'"
-    assert 'data-effort="max"' not in src, (
-        "composer reasoning dropdown must not include Max"
+    assert 'data-effort="max"' in src, (
+        "composer reasoning dropdown must include Max option"
     )
 
 
@@ -135,10 +135,13 @@ def test_selectModelFromDropdown_defers_reasoning_sync_to_onchange():
 
 
 def test_model_dropdown_passes_provider_to_select():
-    """Composer model rows must pass provider context into selectModelFromDropdown."""
+    """Composer model rows must pass provider context through the shared picker callback."""
     with open("static/ui.js") as f:
         src = f.read()
+    assert "selectModelFromDropdown(value,provider)" in src, (
+        "composer default picker callback must still route to selectModelFromDropdown"
+    )
     assert re.search(
-        r"selectModelFromDropdown\(m\.value,\s*m\.providerId",
+        r"selectFromDropdown\(m\.value,\s*m\.providerId",
         src,
-    ), "model dropdown rows must pass providerId to selectModelFromDropdown"
+    ), "model dropdown rows must pass providerId through the shared callback"
