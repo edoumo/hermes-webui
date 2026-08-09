@@ -1,0 +1,28 @@
+[package]
+name = "hermes-webui-rust"
+version = "0.1.0"
+edition = "2021"
+description = "Rust port of Hermes WebUI backend (nesquena/hermes-webui) — R0/R1 bootstrap"
+license = "MIT"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+clap = { version = "4", features = ["derive", "env"] }
+flate2 = "1"
+anyhow = "1"
+http = "1"
+http-body-util = "0.1"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+[profile.release]
+lto = true
