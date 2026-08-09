@@ -20,6 +20,7 @@ Tolerated differences (documented, never masked):
 
 import argparse
 import json
+import re
 import ssl
 import sys
 import urllib.error
@@ -45,6 +46,19 @@ TOLERATED_KEYS = {
     # ("missing"). Both behaviors are faithful to upstream semantics; the
     # value depends on the server's own state directory.
     "state_db",
+    # Documented delta R1: webui_version is computed by the Python server from
+    # `git describe` of the repo at import time (api/updates.py:606). When the
+    # repo carries the port's local commits, the describe string differs from
+    # the Rust port's static baseline token (exp-v0.52.192). At the exact
+    # baseline SHA they coincide; the delta is an environment artifact, not a
+    # contract difference.
+    "webui_version",
+    # Documented delta R1: update_channel_version (channel_version_badge) gets
+    # a `-dirty-<hash>` suffix from upstream _dirty_suffix() when the repo
+    # working tree is dirty. The Rust port computes the clean describe string
+    # only. The delta appears only when the repo has uncommitted changes; it is
+    # an environment artifact, not a contract difference.
+    "update_channel_version",
 }
 
 # Headers that are purely transport/server-level.
@@ -108,6 +122,16 @@ def strip_tolerated(obj: object) -> object:
     return obj
 
 
+# Version tokens injected into the app shell (__WEBUI_VERSION__) differ between
+# the Python server (git describe of the repo, includes the port's local commits)
+# and the Rust port (static baseline token). Normalize them before comparing HTML.
+_VERSION_RE = re.compile(rb"exp-v0\.52\.192[^\"'<\\s]*")
+
+
+def normalize_html(raw: bytes) -> bytes:
+    return _VERSION_RE.sub(b"VERSION", raw)
+
+
 def compare_route(name: str, py: tuple, rs: tuple) -> list:
     deltas = []
     py_status, py_headers, py_raw = py
@@ -128,7 +152,7 @@ def compare_route(name: str, py: tuple, rs: tuple) -> list:
             deltas.append(
                 f"json body differs:\n  python={json.dumps(strip_tolerated(py_json), sort_keys=True)[:400]}\n  rust  ={json.dumps(strip_tolerated(rs_json), sort_keys=True)[:400]}"
             )
-    elif py_raw != rs_raw:
+    elif normalize_html(py_raw) != normalize_html(rs_raw):
         deltas.append(f"raw body differs: python={py_raw[:200]!r} rust={rs_raw[:200]!r}")
 
     # ETag semantics: both must emit a weak ETag on static 200s.
