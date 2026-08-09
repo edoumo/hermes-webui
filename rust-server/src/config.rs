@@ -74,6 +74,19 @@ impl Config {
         self.state_dir.join("settings.json")
     }
 
+    /// Isolated workspace root for the read-only workspace API. Upstream uses
+    /// `~/workspace` by default; the Rust port deliberately isolates to
+    /// `STATE_DIR/workspace` (overridable via `HERMES_WEBUI_WORKSPACE_ROOT` for
+    /// tests) so file ops can never touch arbitrary host paths.
+    pub fn workspace_root(&self) -> PathBuf {
+        if let Ok(v) = std::env::var("HERMES_WEBUI_WORKSPACE_ROOT") {
+            if !v.trim().is_empty() {
+                return PathBuf::from(v.trim());
+            }
+        }
+        self.state_dir.join("workspace")
+    }
+
     /// URL de base du bridge Hermes Agent (default 127.0.0.1:8794).
     pub fn bridge_url(&self) -> String {
         std::env::var("HERMES_WEBUI_BRIDGE_URL")
