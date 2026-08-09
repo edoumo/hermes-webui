@@ -16,6 +16,8 @@ pub struct AppState {
     pub requests_total: Arc<AtomicU64>,
     /// Unix timestamp (seconds) of the last accepted request.
     pub last_request_at: Arc<AtomicU64>,
+    /// HTTP client partagé (réutilisé par le client bridge).
+    pub http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -25,6 +27,7 @@ impl AppState {
             server_started_at: started_at,
             requests_total: Arc::new(AtomicU64::new(0)),
             last_request_at: Arc::new(AtomicU64::new(0)),
+            http_client: reqwest::Client::new(),
         }
     }
 

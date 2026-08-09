@@ -21,6 +21,12 @@ pub enum AppError {
     #[error("{0}")]
     Internal(String),
 
+    #[error("{0}")]
+    HermesUnavailable(String),
+
+    #[error("{0}")]
+    HermesProtocolError(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -31,6 +37,8 @@ impl AppError {
             AppError::Config(_) | AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::HermesUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::HermesProtocolError(_) => StatusCode::BAD_GATEWAY,
             AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

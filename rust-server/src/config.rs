@@ -73,6 +73,12 @@ impl Config {
     pub fn settings_path(&self) -> PathBuf {
         self.state_dir.join("settings.json")
     }
+
+    /// URL de base du bridge Hermes Agent (default 127.0.0.1:8794).
+    pub fn bridge_url(&self) -> String {
+        std::env::var("HERMES_WEBUI_BRIDGE_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:8794".to_string())
+    }
 }
 
 /// Run `git describe` in `dir` and return the first line, or None on any
