@@ -32,6 +32,9 @@ pub fn build_router(state: AppState) -> axum::Router {
         .merge(crate::routes::static_files::router())
         .merge(crate::routes::index::router())
         .merge(crate::routes::settings::router())
+        .merge(crate::routes::workspace::router())
+        .merge(crate::routes::sessions::router())
+        .merge(crate::auth::router())
         .merge(
             axum::Router::new()
                 .route("/api/bridge/health", axum::routing::get(bridge_health))

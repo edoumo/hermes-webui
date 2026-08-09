@@ -2,5 +2,7 @@
 
 pub mod health;
 pub mod index;
+pub mod sessions;
 pub mod settings;
 pub mod static_files;
+pub mod workspace;
