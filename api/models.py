@@ -1081,6 +1081,70 @@ def _parse_nonnegative_int(value):
     return parsed if parsed >= 0 else None
 
 
+_WEBUI_SESSION_STORES = {}
+_WEBUI_SESSION_STORES_LOCK = threading.Lock()
+
+
+def _webui_session_store_mode() -> str:
+    mode = str(os.environ.get('HERMES_WEBUI_SESSION_STORE', 'legacy')).strip().lower()
+    return mode if mode in {'legacy', 'shadow', 'sqlite'} else 'legacy'
+
+
+def _webui_session_store():
+    from api.session_store import SqliteSessionStore
+
+    db_path = Path(_active_state_db_path()).expanduser().resolve()
+    key = str(db_path)
+    with _WEBUI_SESSION_STORES_LOCK:
+        store = _WEBUI_SESSION_STORES.get(key)
+        if store is None:
+            store = SqliteSessionStore(db_path)
+            _WEBUI_SESSION_STORES[key] = store
+        return store
+
+
+def _sqlite_manifest_marker(path: Path) -> bool:
+    try:
+        prefix = path.read_text(encoding='utf-8')[:65536]
+    except OSError:
+        return False
+    return '"session_store_backend": "sqlite"' in prefix
+
+
+def _write_sqlite_session_manifest(path: Path, payload: dict) -> None:
+    """Write a bounded discovery manifest without overwriting migration input.
+
+    Existing full legacy JSON is deliberately retained as the rollback baseline.
+    Once a path is already a manifest, subsequent SQLite saves may refresh it.
+    """
+    if path.exists() and not _sqlite_manifest_marker(path):
+        return
+    excluded = {'messages', 'context_messages', 'tool_calls', 'anchor_activity_scenes'}
+    manifest = {key: value for key, value in payload.items() if key not in excluded}
+    manifest['session_store_backend'] = 'sqlite'
+    manifest['message_count'] = len(payload.get('messages') or [])
+    manifest['tool_call_count'] = len(payload.get('tool_calls') or [])
+    manifest['anchor_scene_index'] = _anchor_scene_index_from_records(
+        payload.get('anchor_activity_scenes')
+    )
+    # Keep this terminal key for the existing metadata-prefix reader.
+    manifest['messages'] = []
+    encoded = json.dumps(manifest, ensure_ascii=False, indent=2)
+    tmp = path.with_suffix(f'.tmp.{os.getpid()}.{threading.current_thread().ident}')
+    try:
+        with open(tmp, 'w', encoding='utf-8') as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _safe_replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
+
 class Session:
     def __init__(self, session_id: str=None, title: str='Untitled',
                  workspace=str(DEFAULT_WORKSPACE), model=DEFAULT_MODEL,
@@ -1219,6 +1283,7 @@ class Session:
             except (TypeError, ValueError):
                 parsed_message_count = None
         self._metadata_message_count = parsed_message_count if parsed_message_count is not None and parsed_message_count >= 0 else None
+        self._metadata_user_message_count = None
 
     @property
     def path(self):
@@ -1298,7 +1363,44 @@ class Session:
         extra = {k: v for k, v in self.__dict__.items()
                  if k not in METADATA_FIELDS and k not in _placed
                  and not k.startswith('_')}
-        payload = json.dumps({**meta, **extra}, ensure_ascii=False, indent=2)
+        payload_data = {**meta, **extra}
+
+        # Durable normalized store. In ``shadow`` mode SQLite is best-effort and
+        # the legacy JSON remains authoritative. In ``sqlite`` mode the database
+        # is authoritative and the JSON file becomes a bounded discovery manifest.
+        _store_mode = _webui_session_store_mode()
+        if _store_mode in ('shadow', 'sqlite'):
+            try:
+                _store = _webui_session_store()
+                _stats = _store.save(
+                    self.session_id,
+                    payload_data,
+                    expected_revision=getattr(self, '_store_generation', None),
+                    force=(_store_mode == 'shadow'),
+                )
+                self._store_generation = _stats.generation
+            except Exception:
+                if _store_mode == 'sqlite':
+                    raise
+                logger.exception("shadow session-store write failed for %s", self.session_id)
+            else:
+                if _store_mode == 'sqlite':
+                    _write_sqlite_session_manifest(self.path, payload_data)
+                    if not skip_index:
+                        _write_session_index(updates=[self])
+                    if self.messages:
+                        try:
+                            _clear_webui_zero_message_orphan_tombstone(self.session_id)
+                            _clear_webui_deleted_session_tombstone(self.session_id)
+                        except Exception:
+                            logger.debug(
+                                "Failed to clear webui tombstone for %s",
+                                self.session_id,
+                                exc_info=True,
+                            )
+                    return
+
+        payload = json.dumps(payload_data, ensure_ascii=False, indent=2)
 
         # ── #1558 backup safeguard ──────────────────────────────────────
         # Before overwriting the session file, copy the previous version to
@@ -1411,6 +1513,32 @@ class Session:
         if not is_safe_session_id(sid):
             return None
         p = SESSION_DIR / f'{sid}.json'
+        use_sqlite = _webui_session_store_mode() == 'sqlite' or (p.exists() and _sqlite_manifest_marker(p))
+        if use_sqlite:
+            try:
+                _store = _webui_session_store()
+                stored = _store.load(sid)
+            except Exception:
+                # A SQLite manifest contains no transcript; falling through to it
+                # would fabricate an empty conversation. Fail closed instead.
+                if p.exists() and _sqlite_manifest_marker(p):
+                    raise
+                logger.exception("normalized session-store read failed for %s", sid)
+            else:
+                if stored is not None:
+                    stored['messages'], _collapsed_partials = _collapse_adjacent_duplicate_partials(
+                        stored.get('messages')
+                    )
+                    session = cls(**stored)
+                    _stored_meta = _store.load_metadata(sid) or {}
+                    session._store_generation = _parse_nonnegative_int(
+                        _stored_meta.get('_store_generation')
+                    )
+                    if _collapsed_partials:
+                        session.save(touch_updated_at=False, skip_index=True)
+                    return session
+                if p.exists() and _sqlite_manifest_marker(p):
+                    raise RuntimeError(f"SQLite manifest exists but database row is missing for {sid}")
         if not p.exists():
             return None
         # #5854: snapshot the stat signature BEFORE reading so a legacy-facts
@@ -1465,6 +1593,31 @@ class Session:
         if not is_safe_session_id(sid):
             return None
         p = SESSION_DIR / f'{sid}.json'
+        use_sqlite = _webui_session_store_mode() == 'sqlite' or (p.exists() and _sqlite_manifest_marker(p))
+        if use_sqlite:
+            try:
+                parsed = _webui_session_store().load_metadata(sid)
+            except Exception:
+                if p.exists() and _sqlite_manifest_marker(p):
+                    raise
+                logger.exception("normalized metadata read failed for %s", sid)
+            else:
+                if parsed is not None:
+                    message_count = _parse_nonnegative_int(parsed.pop('_store_message_count', None))
+                    user_message_count = _parse_nonnegative_int(parsed.pop('_store_user_message_count', None))
+                    parsed.pop('_store_tool_call_count', None)
+                    store_generation = _parse_nonnegative_int(parsed.pop('_store_generation', None))
+                    parsed.pop('_store_fingerprint', None)
+                    parsed['messages'] = []
+                    parsed['tool_calls'] = []
+                    session = cls(**parsed)
+                    session._metadata_message_count = message_count
+                    session._metadata_user_message_count = user_message_count
+                    session._store_generation = store_generation
+                    session._loaded_metadata_only = True
+                    return session
+                if p.exists() and _sqlite_manifest_marker(p):
+                    raise RuntimeError(f"SQLite manifest exists but metadata row is missing for {sid}")
         if not p.exists():
             return None
         try:
@@ -1640,7 +1793,11 @@ class Session:
                 'worktree_repo_root': self.worktree_repo_root,
                 'worktree_created_at': self.worktree_created_at,
             } if self.worktree_path else {}),
-            'user_message_count': Session._compute_user_message_count(self.messages),
+            'user_message_count': (
+                self._metadata_user_message_count
+                if self._metadata_user_message_count is not None
+                else Session._compute_user_message_count(self.messages)
+            ),
             'active_stream_id': self.active_stream_id,
             'pending_user_message': self.pending_user_message,
             'has_pending_user_message': has_pending_user_message,
@@ -4036,6 +4193,59 @@ def _evict_sessions_over_cap(cap: int | None = None) -> int:
             len(SESSIONS), cap,
         )
     return evicted
+
+
+def load_normalized_session_page(sid, *, msg_limit, msg_before=None):
+    """Load a bounded SQLite transcript window plus compact session metadata.
+
+    Returns ``None`` for legacy/shadow sessions and active streams so callers can
+    preserve the existing reconciliation path. The returned Session deliberately
+    retains the metadata-only save guard: a partial window must never be persisted
+    as if it were the complete transcript.
+    """
+    if _webui_session_store_mode() != 'sqlite' or not is_safe_session_id(sid):
+        return None
+    store = _webui_session_store()
+    if store.get_fingerprint(sid) is None:
+        return None
+    session = Session.load_metadata_only(sid)
+    if session is None or getattr(session, 'active_stream_id', None):
+        return None
+    try:
+        visible_limit = max(1, int(msg_limit))
+    except (TypeError, ValueError):
+        return None
+    raw_limit = min(500, max(visible_limit, visible_limit * 10))
+    page = store.page_messages(
+        sid,
+        before_position=msg_before,
+        limit=raw_limit,
+    )
+    positions = page.get('positions') or []
+    base_position = int(positions[0]) if positions else 0
+    end_position = int(positions[-1]) + 1 if positions else base_position
+    session.messages = list(page.get('messages') or [])
+    session.tool_calls = store.tool_calls_for_message_window(
+        sid,
+        start_position=base_position,
+        end_position=end_position,
+    )
+    session.anchor_activity_scenes = store.scenes_for_message_window(
+        sid,
+        start_position=base_position,
+        end_position=end_position,
+    )
+    session._metadata_message_count = int(page.get('total') or 0)
+    session._metadata_user_message_count = int(page.get('user_message_count') or 0)
+    session._loaded_metadata_only = True
+    return {
+        'session': session,
+        'base_position': base_position,
+        'total': int(page.get('total') or 0),
+        'user_message_count': int(page.get('user_message_count') or 0),
+        'has_older': bool(page.get('has_older')),
+        'has_newer': bool(page.get('has_newer')),
+    }
 
 
 def get_session(sid, metadata_only=False):

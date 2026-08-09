@@ -9184,6 +9184,7 @@ def _keep_latest_messaging_session_per_source(
 from api.models import (
     Session,
     get_session,
+    load_normalized_session_page,
     find_compression_recovery_session,
     get_session_for_file_ops,
     new_session,
@@ -12354,13 +12355,20 @@ def handle_get(handler, parsed) -> bool:
         try:
             _t1 = _time.monotonic()
             if _diag: _diag.stage("t1_after_get_session_check")
-            s = get_session(sid, metadata_only=(not load_messages))
-            # ── Session rollover proposal at OPEN time ─────────────────────
-            # The end-of-turn hook alone misses oversized sessions that are
-            # only viewed (GET /api/session) without a new message. Detect
-            # here too — the session object is already loaded, so this is a
-            # cheap stat() + flag check; the summary LLM call runs in its own
-            # daemon thread. Non-fatal by design.
+            _normalized_page = None
+            if load_messages and msg_limit is not None:
+                _normalized_page = load_normalized_session_page(
+                    sid,
+                    msg_limit=msg_limit,
+                    msg_before=msg_before,
+                )
+            s = (
+                _normalized_page['session']
+                if _normalized_page is not None
+                else get_session(sid, metadata_only=(not load_messages))
+            )
+            # Detect oversized sessions at open time as well as turn teardown.
+            # The summary call remains asynchronous and non-fatal.
             try:
                 from api.rollover import maybe_propose_rollover
 
@@ -12389,7 +12397,8 @@ def handle_get(handler, parsed) -> bool:
                 if _diag: _diag.finish()
                 return bad(handler, "Session not found", 404)
             original_stream_id = getattr(s, "active_stream_id", None)
-            _clear_stale_stream_state(s)
+            if _normalized_page is None:
+                _clear_stale_stream_state(s)
             cli_meta = _lookup_cli_session_metadata(sid) if _session_requires_cli_metadata_lookup(s) else {}
             is_messaging_session = _is_messaging_session_record(s) or _is_messaging_session_record(cli_meta)
             cli_messages = []
@@ -12400,22 +12409,25 @@ def handle_get(handler, parsed) -> bool:
             if is_messaging_session:
                 cli_messages = get_cli_session_messages(sid)
             elif load_messages:
-                if msg_limit is not None:
-                    (
-                        state_db_since_timestamp,
-                        limited_sidecar_messages,
-                    ) = _state_db_since_timestamp_for_limited_display(
-                        s,
-                        msg_limit,
-                        msg_before=msg_before,
+                if _normalized_page is not None:
+                    limited_sidecar_messages = list(getattr(s, 'messages', []) or [])
+                else:
+                    if msg_limit is not None:
+                        (
+                            state_db_since_timestamp,
+                            limited_sidecar_messages,
+                        ) = _state_db_since_timestamp_for_limited_display(
+                            s,
+                            msg_limit,
+                            msg_before=msg_before,
+                        )
+                    _state_db_reader_kwargs = {"profile": _session_profile}
+                    if state_db_since_timestamp is not None:
+                        _state_db_reader_kwargs["since_timestamp"] = state_db_since_timestamp
+                    state_db_messages = get_state_db_session_messages(
+                        sid,
+                        **_state_db_reader_kwargs,
                     )
-                _state_db_reader_kwargs = {"profile": _session_profile}
-                if state_db_since_timestamp is not None:
-                    _state_db_reader_kwargs["since_timestamp"] = state_db_since_timestamp
-                state_db_messages = get_state_db_session_messages(
-                    sid,
-                    **_state_db_reader_kwargs,
-                )
             elif not is_messaging_session:
                 # Metadata-only callers still need the same append-only
                 # reconciliation contract as full loads so stale/replayed
@@ -12447,6 +12459,8 @@ def handle_get(handler, parsed) -> bool:
                     # different slices of the same stitched conversation, merge
                     # them chronologically and dedupe exact repeats.
                     _all_msgs = _merged_session_messages_for_display(s, cli_messages)
+                elif _normalized_page is not None:
+                    _all_msgs = list(getattr(s, 'messages', []) or [])
                 elif msg_limit is not None:
                     _all_msgs = _limited_webui_messages_for_display_with_sidecar(
                         s,
@@ -12494,9 +12508,11 @@ def handle_get(handler, parsed) -> bool:
                 _truncated_msgs, _messages_offset = _message_window_for_display(
                     _all_msgs,
                     msg_limit=msg_limit,
-                    msg_before=msg_before,
+                    msg_before=None if _normalized_page is not None else msg_before,
                     expand_renderable=expand_renderable,
                 )
+                if _normalized_page is not None:
+                    _messages_offset += int(_normalized_page.get('base_position') or 0)
                 if msg_limit is not None:
                     _truncated_msgs = _messages_for_limited_payload(_truncated_msgs)
                 _truncated_msgs = _hydrate_anchor_activity_scenes(
@@ -12513,7 +12529,11 @@ def handle_get(handler, parsed) -> bool:
             _windowed_messages = (
                 load_messages
                 and msg_limit is not None
-                and (msg_before is not None or len(_truncated_msgs) < len(_all_msgs))
+                and (
+                    _normalized_page is not None
+                    or msg_before is not None
+                    or len(_truncated_msgs) < len(_all_msgs)
+                )
             )
             # Resolve effective context_length with model-metadata fallback so
             # older sessions (pre-#1318) that have context_length=0 persisted
@@ -12583,7 +12603,11 @@ def handle_get(handler, parsed) -> bool:
                     _messages_offset,
                     len(_truncated_msgs),
                 )
-            _merged_message_count = _summary_message_count if _summary_message_count is not None else len(_all_msgs)
+            _merged_message_count = (
+                int(_normalized_page.get('total') or 0)
+                if _normalized_page is not None
+                else (_summary_message_count if _summary_message_count is not None else len(_all_msgs))
+            )
             _merged_last_message_at = _summary_last_message_at if _summary_last_message_at is not None else 0
             if _summary_last_message_at is None and _all_msgs:
                 try:
@@ -12605,6 +12629,11 @@ def handle_get(handler, parsed) -> bool:
             raw = compact_session | {
                 "messages": _truncated_msgs,
                 "message_count": _merged_message_count,
+                "user_message_count": (
+                    int(_normalized_page.get('user_message_count') or 0)
+                    if _normalized_page is not None
+                    else compact_session.get('user_message_count', 0)
+                ),
                 "tool_calls": _session_tool_calls,
                 "active_stream_id": getattr(s, "active_stream_id", None),
                 "pending_user_message": getattr(s, "pending_user_message", None),

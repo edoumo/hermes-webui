@@ -67,6 +67,51 @@ def _invoke(session, query=None):
     return captured["data"]["session"]
 
 
+def test_normalized_sqlite_page_preserves_absolute_offset_and_total_count():
+    import api.routes as routes
+
+    session = _FakeSession([
+        {"role": "assistant", "content": "second"},
+        {"role": "assistant", "content": "third"},
+    ])
+    session.tool_calls = [
+        {"name": "second-tool", "assistant_msg_idx": 1},
+        {"name": "third-tool", "assistant_msg_idx": 2},
+    ]
+    normalized = {
+        "session": session,
+        "base_position": 1,
+        "total": 4,
+        "user_message_count": 1,
+        "has_older": True,
+        "has_newer": True,
+    }
+    captured = {}
+
+    def fake_j(_handler, data, status=200, extra_headers=None):
+        captured["data"] = data
+        return data
+
+    parsed = urlparse(
+        "/api/session?session_id=tail_payload_001&messages=1&resolve_model=0&msg_before=3&msg_limit=2"
+    )
+    with patch("api.routes.load_normalized_session_page", return_value=normalized), \
+         patch("api.routes.get_session", side_effect=AssertionError("full load forbidden")), \
+         patch("api.routes._clear_stale_stream_state", side_effect=AssertionError("partial save forbidden")), \
+         patch("api.routes._lookup_cli_session_metadata", return_value={}), \
+         patch("api.routes.get_state_db_session_messages", side_effect=AssertionError("duplicate load forbidden")), \
+         patch("api.routes.redact_session_data", side_effect=lambda raw: raw), \
+         patch("api.routes.j", side_effect=fake_j):
+        routes.handle_get(SimpleNamespace(), parsed)
+
+    payload = captured["data"]["session"]
+    assert [message["content"] for message in payload["messages"]] == ["second", "third"]
+    assert payload["message_count"] == 4
+    assert payload["user_message_count"] == 1
+    assert payload["_messages_offset"] == 1
+    assert [call["assistant_msg_idx"] for call in payload["tool_calls"]] == [0, 1]
+
+
 def test_tail_window_includes_windowed_session_tool_calls_even_when_messages_have_tool_metadata():
     session = _FakeSession([
         {"role": "user", "content": "older"},
