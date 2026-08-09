@@ -1,12 +1,14 @@
 //! `/health` endpoint — faithful port of `_handle_health` (api/routes.py:11785).
 //!
 //! Upstream contract (baseline 192df903):
+//!
 //! - GET /health → 200 JSON:
-//!   {"status":"ok","sessions":N,"active_streams":N,"active_runs":N,"runs":[],
-//!    "last_run_finished_at":null,"server_started_at":<epoch float>,
-//!    "uptime_seconds":<float>,"accept_loop":{"requests_total":N,"last_request_at":<float>}}
+//!   `{"status":"ok","sessions":N,"active_streams":N,"active_runs":N,"runs":[],
+//!   "last_run_finished_at":null,"server_started_at":<epoch float>,
+//!   "uptime_seconds":<float>,"accept_loop":{"requests_total":N,"last_request_at":<float>}}`
 //! - 503 with same shape when status != "ok" (streams lock blocked / run lifecycle).
 //! - `?deep=1|true|yes|on` adds "checks" and may return 503.
+//!
 //! The R0/R1 port has no streams/runs yet, so status is always "ok" and
 //! deep checks are trivially healthy — the JSON shape is preserved.
 

@@ -93,16 +93,6 @@ pub async fn static_file(State(state): State<AppState>, req: Request) -> Respons
     let Some(file) = sandboxed(&root, rel) else {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
     };
-    if !file.is_file() {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
-    }
-
-    let Ok(meta) = std::fs::metadata(&file) else {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
-    };
-    let Ok(raw) = std::fs::read(&file) else {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
-    };
 
     let ext = file
         .extension()
@@ -115,8 +105,44 @@ pub async fn static_file(State(state): State<AppState>, req: Request) -> Respons
         mime.to_string()
     };
 
-    let etag = format!("W/\"{:x}-{:x}\"", meta.len(), mtime_ns(&meta));
-    let gz = gzip_if_worth(&raw, mime);
+    // Cache lookup keyed by absolute path; invalidated by (size, mtime_ns),
+    // mirroring the upstream `_STATIC_CACHE` contract. On a valid hit we reuse
+    // `raw` / `gz` / `etag` from memory (shared via `Arc`) without touching the
+    // disk again; on a miss we read + precompress once and store it.
+    let Some(meta) = std::fs::metadata(&file).ok().filter(|m| m.is_file()) else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
+    };
+    let sig = (meta.len(), mtime_ns(&meta));
+
+    let entry: std::sync::Arc<crate::state::StaticCacheEntry> =
+        match state.static_cache.lookup(&file, sig) {
+            Some(entry) => entry,
+            None => {
+                let Ok(raw) = std::fs::read(&file) else {
+                    return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"})))
+                        .into_response();
+                };
+                let etag = format!("W/\"{:x}-{:x}\"", sig.0, sig.1);
+                let gz = gzip_if_worth(&raw, mime);
+                let entry = crate::state::StaticCacheEntry { sig, raw, gz, etag };
+                state.static_cache.insert(
+                    file.clone(),
+                    crate::state::StaticCacheEntry {
+                        sig: entry.sig,
+                        raw: entry.raw.clone(),
+                        gz: entry.gz.clone(),
+                        etag: entry.etag.clone(),
+                    },
+                );
+                // Return the local owned entry (equivalent payload, avoids an
+                // extra Arc round-trip through the cache map).
+                std::sync::Arc::new(entry)
+            }
+        };
+
+    let etag = &entry.etag;
+    let gz = entry.gz.as_ref();
+    let raw = &entry.raw;
 
     let query = req.uri().query().unwrap_or("");
     let has_fingerprint = query
@@ -135,7 +161,7 @@ pub async fn static_file(State(state): State<AppState>, req: Request) -> Respons
         .unwrap_or("")
         .to_string();
 
-    if if_none_match == etag {
+    if if_none_match == *etag {
         let mut resp = Response::new(Body::empty());
         *resp.status_mut() = StatusCode::NOT_MODIFIED;
         resp.headers_mut()
@@ -156,10 +182,10 @@ pub async fn static_file(State(state): State<AppState>, req: Request) -> Respons
         .unwrap_or("")
         .to_lowercase();
     let use_gzip = gz.is_some() && accept_encoding.contains("gzip");
-    let body = if use_gzip {
-        gz.as_deref().unwrap()
+    let body: &[u8] = if use_gzip {
+        gz.expect("use_gzip implies gz").as_slice()
     } else {
-        &raw
+        raw.as_slice()
     };
 
     let mut resp = Response::new(Body::from(body.to_vec()));

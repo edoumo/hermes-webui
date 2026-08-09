@@ -137,3 +137,90 @@ async fn static_missing_file_is_404_json() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["error"], "not found");
 }
+
+/// The in-memory static cache (port of upstream `_STATIC_CACHE`) must populate
+/// on the first request and serve correct ETag/gzip/body on subsequent hits
+/// without re-reading the disk. Keyed by absolute path, invalidated by
+/// (size, mtime_ns).
+#[tokio::test]
+async fn static_cache_populates_and_serves_correct_hits() {
+    let state = test_state();
+    let static_root = state.config.static_dir();
+    // Deterministic, compressible file that exists in the static/ tree.
+    let abs = static_root.join("boot.js").canonicalize().unwrap();
+
+    // First request must populate the cache for boot.js.
+    let app = build_router(state.clone());
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/static/boot.js")
+                .header(header::ACCEPT_ENCODING, "gzip")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(first.headers()[header::CONTENT_ENCODING], "gzip");
+    let first_etag = first.headers()[header::ETAG].to_str().unwrap().to_string();
+    let first_body = axum::body::to_bytes(first.into_body(), 1 << 20)
+        .await
+        .unwrap();
+
+    // The cache must now hold a valid entry keyed by the absolute path.
+    let meta = std::fs::metadata(&abs).unwrap();
+    let sig = (meta.len(), mtime_ns_of(&abs));
+    let entry = state.static_cache.lookup(&abs, sig);
+    assert!(
+        entry.is_some(),
+        "cache should be populated after first request"
+    );
+    let entry = entry.unwrap();
+    assert_eq!(entry.etag, first_etag);
+    assert!(
+        entry.gz.is_some(),
+        "boot.js (>1024B, compressible) must be gzip-cached"
+    );
+    assert_eq!(
+        entry.raw.len(),
+        std::fs::metadata(&abs).unwrap().len() as usize,
+        "cached raw must match on-disk size"
+    );
+
+    // A second request (fresh cache hit) must still return the correct
+    // headers/body: same ETag, gzip encoding, identical payload.
+    let second = app
+        .oneshot(
+            Request::builder()
+                .uri("/static/boot.js")
+                .header(header::ACCEPT_ENCODING, "gzip")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::OK);
+    assert_eq!(second.headers()[header::ETAG], first_etag);
+    assert_eq!(second.headers()[header::CONTENT_ENCODING], "gzip");
+    let second_body = axum::body::to_bytes(second.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    assert_eq!(
+        second_body, first_body,
+        "cache hit must serve identical body"
+    );
+    // ETag stays stable and correct for a served (non-304) hit.
+    assert!(second_body.len() < std::fs::metadata(&abs).unwrap().len() as usize);
+}
+
+/// Nanosecond mtime helper (mirrors the handler's `mtime_ns`).
+fn mtime_ns_of(path: &std::path::Path) -> u128 {
+    std::fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
