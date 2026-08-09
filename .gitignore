@@ -53,6 +53,8 @@ docs/*
 !docs/rfcs/**
 !docs/rust-port/
 !docs/rust-port/**
+!docs/handoff/
+!docs/handoff/**
 !docs/architecture/
 !docs/architecture/**
 
