@@ -1,8 +1,8 @@
 # Handoff — Hermes WebUI Rust R3 (état de reprise)
 
-TIMESTAMP = 2026-08-10T17:15:00Z
+TIMESTAMP = 2026-08-10T18:30:00Z
 BRANCHE = rust-port/r3-functional-parity
-HEAD = 15f42c52 (docs R3 upstream-delta + stability)
+HEAD = 43984711 (docs R3 upstream-delta + stability + handoff)
 BASELINE_UPSTREAM = 192df903 (exp-v0.52.192)
 UPSTREAM_ACTUEL = bd91b649 (exp-v0.52.193) — delta NO_IMPACT (a11y frontend)
 R2_CHECKPOINT = rust-port/r2-agent-bridge @ 16145f75 (intact)
@@ -22,9 +22,9 @@ Browser / client
 |---|---|---|---|
 | A | Agent sessions/state.db/cache | WORKER_EN_COURS | worker (bridge/ exclusif) |
 | B | Password PBKDF2 | WORKER_EN_COURS | worker (src/auth/password.rs) |
-| C | WebAuthn/passkeys | WORKER_EN_COURS | worker (src/auth/webauthn.rs) |
+| C | WebAuthn/passkeys | PENDING (vague 2) | worker (src/auth/webauthn.rs) |
 | D | Uploads/attachments | WORKER_EN_COURS | worker (src/routes/uploads.rs) |
-| E | Compat harness v2 | WORKER_EN_COURS | worker (tests/compat/) |
+| E | Compat harness v2 | PENDING (vague 2) | worker (tests/compat/) |
 | F | Import/export sessions | PENDING | — |
 | G | Workspace mutations | PREPARE_ONLY | — |
 | H | Upstream sync | DONE (NO_IMPACT) | intégrateur |
@@ -44,6 +44,13 @@ CARGO_FMT = PASS | CARGO_BUILD = PASS | CARGO_CLIPPY = 0 warnings
 CARGO_TEST = 55 passed (10 suites)
 ```
 
+## Découverte worker B (PBKDF2)
+
+PBKDF2 600k itérations en Rust pur (hmac crate) = ~7.75s par hash — trop lent
+pour un login. Le worker doit utiliser une implémentation optimisée
+(crate pbkdf2 avec HMAC accéléré, ou ring). Vérifier le nombre d'itérations
+au HEAD upstream bd91b649 (ne pas figer 600k sans vérification).
+
 ## Red lines
 
 ```
@@ -54,12 +61,13 @@ BRIDGE = localhost uniquement | SECRETS = AUCUN | PROFESSEUR = NON
 
 ## Prochaines actions
 
-1. Attendre les 5 workers R3 (A/B/C/D/E)
-2. Intégrer les snippets de wiring dans les fichiers partagés (une seule fois)
-3. Gate d'intégration complète (fmt/build/clippy/test/release)
-4. Soak tests (r3-stability.md)
-5. Docs R3 restantes (r3-agent-state, r3-agent-cache, r3-auth-password,
+1. Attendre les 3 workers R3 (A/B/D) — vague 1
+2. Lancer vague 2 (C WebAuthn, E Compat v2) si périmètres libres
+3. Intégrer les snippets de wiring dans les fichiers partagés (une seule fois)
+4. Gate d'intégration complète (fmt/build/clippy/test/release)
+5. Soak tests (r3-stability.md)
+6. Docs R3 restantes (r3-agent-state, r3-agent-cache, r3-auth-password,
    r3-webauthn, r3-uploads, r3-compat-v2)
-6. Commits locaux atomiques (aucun push)
-7. Archive sanitizée + SHA256
-8. Rapport final §28 + verdict + décision R4 (options A/B/C/D)
+7. Commits locaux atomiques (aucun push)
+8. Archive sanitizée + SHA256
+9. Rapport final §28 + verdict + décision R4 (options A/B/C/D)
