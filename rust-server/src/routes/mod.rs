@@ -5,4 +5,5 @@ pub mod index;
 pub mod sessions;
 pub mod settings;
 pub mod static_files;
+pub mod uploads;
 pub mod workspace;
