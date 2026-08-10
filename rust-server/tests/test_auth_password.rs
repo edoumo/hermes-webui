@@ -39,7 +39,7 @@ fn test_state_dir(name: &str) -> PathBuf {
 }
 
 /// Écrit un settings.json minimal avec le password_hash donné.
-fn write_settings(state_dir: &PathBuf, password_hash: Option<&str>) {
+fn write_settings(state_dir: &std::path::Path, password_hash: Option<&str>) {
     let value = match password_hash {
         Some(h) => serde_json::json!({ "password_hash": h }),
         None => serde_json::json!({ "password_hash": null }),

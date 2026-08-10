@@ -35,6 +35,7 @@ pub fn build_router(state: AppState) -> axum::Router {
         .merge(crate::routes::workspace::router())
         .merge(crate::routes::sessions::router())
         .merge(crate::routes::uploads::router())
+        .merge(crate::auth::webauthn::router())
         .merge(crate::auth::router())
         .merge(
             axum::Router::new()

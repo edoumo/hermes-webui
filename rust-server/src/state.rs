@@ -61,6 +61,8 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// Session store auth (fondation R2, state test isolé).
     pub session_store: crate::auth::SessionStore,
+    /// Challenge store WebAuthn (mémoire, TTL 90s, single-use).
+    pub challenge_store: crate::auth::webauthn::ChallengeStore,
     /// In-memory static-file cache (port of upstream `_STATIC_CACHE`).
     pub static_cache: StaticCache,
 }
@@ -74,6 +76,7 @@ impl AppState {
             last_request_at: Arc::new(AtomicU64::new(0)),
             http_client: reqwest::Client::new(),
             session_store: crate::auth::SessionStore::default(),
+            challenge_store: crate::auth::webauthn::ChallengeStore::default(),
             static_cache: StaticCache::new(),
         }
     }

@@ -3,7 +3,6 @@
 //! delete, invalid id, malformed/corrupt metadata, path tampering, persistence
 //! après reconstruction, concurrent reads, classification WebUI/CLI.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use axum::body::Body;
@@ -190,6 +189,7 @@ fn concurrent_reads_are_safe() {
         let sid = format!("{:012x}", i);
         create_session_file(&state, &sid, &format!("S{i}"));
     }
+    let _ = s;
     let handles: Vec<_> = (0..8)
         .map(|i| {
             let s = Store::new(state.config.state_dir.clone());

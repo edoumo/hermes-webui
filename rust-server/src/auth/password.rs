@@ -138,8 +138,10 @@ pub fn hash_password(state_dir: &Path, password: &str) -> String {
 }
 
 /// Hash hex attendu (upstream `get_password_hash`, auth.py:398) :
+///
 /// 1. env `HERMES_WEBUI_PASSWORD` (strip, prioritaire) — hashé au vol ;
 /// 2. sinon `settings.json["password_hash"]` (string hex, ou None).
+///
 /// Le fichier settings est relu à chaque appel (pas de cache : le port Rust
 /// n'a pas le problème de coût par requête de Python, et ça évite toute
 /// invalidation de cache à gérer).

@@ -32,6 +32,7 @@ use sha2::Sha256;
 use crate::state::AppState;
 
 pub mod password;
+pub mod webauthn;
 
 type HmacSha256 = Hmac<Sha256>;
 

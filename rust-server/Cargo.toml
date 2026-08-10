@@ -7,6 +7,10 @@ license = "MIT"
 
 [dependencies]
 axum = { version = "0.8", features = ["multipart"] }
+webauthn-rs = "0.6.1-dev"
+base64 = "0.21"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace"] }

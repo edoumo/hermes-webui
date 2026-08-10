@@ -9,7 +9,6 @@
 //! Each test builds an isolated AppState whose state_dir is a throwaway temp
 //! dir; attachments land in `state_dir/attachments/<session>/`.
 
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::Body;
