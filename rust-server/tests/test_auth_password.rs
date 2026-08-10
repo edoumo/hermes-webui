@@ -92,6 +92,7 @@ fn pbkdf2_matches_python_600k_real() {
 
 // ── Format stocké identique ───────────────────────────────────────────────
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn stored_format_matches_upstream() {
     let dir = test_state_dir("stored-format");
@@ -144,6 +145,7 @@ fn pbkdf2_key_truncated_to_32_bytes() {
 
 // ── Vérification : correct / wrong / malformed / empty / Unicode / long ──
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn verify_correct_password() {
     let dir = test_state_dir("verify-correct");
@@ -154,6 +156,7 @@ fn verify_correct_password() {
     assert!(!migrated);
 }
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn verify_wrong_password() {
     let dir = test_state_dir("verify-wrong");
@@ -179,6 +182,7 @@ fn verify_no_password_configured() {
     assert!(!is_password_auth_enabled(&dir));
 }
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn verify_malformed_stored_hash() {
     let dir = test_state_dir("verify-malformed");
@@ -200,6 +204,7 @@ fn verify_malformed_stored_hash() {
     assert!(!ok);
 }
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn verify_empty_password() {
     let dir = test_state_dir("verify-empty");
@@ -213,6 +218,7 @@ fn verify_empty_password() {
     assert!(!ok, "espace ≠ vide (pas de strip côté verify, upstream)");
 }
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn verify_unicode_password() {
     let dir = test_state_dir("verify-unicode");
@@ -229,6 +235,7 @@ fn verify_unicode_password() {
     assert!(!ok, "combining accent ≠ précomposé (comportement upstream)");
 }
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn verify_long_password() {
     let dir = test_state_dir("verify-long");
@@ -291,6 +298,7 @@ fn constant_time_eq_no_early_exit_on_first_byte() {
     assert!(!constant_time_eq(a, &a[..63]));
 }
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn verify_password_uses_constant_time_path() {
     // Le chemin de vérification passe par constant_time_eq (pas de ==
@@ -313,6 +321,7 @@ fn verify_password_uses_constant_time_path() {
 
 // ── Bootstrap / change / removal ─────────────────────────────────────────
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn bootstrap_then_change_then_remove() {
     let dir = test_state_dir("lifecycle");
@@ -344,6 +353,7 @@ fn bootstrap_then_change_then_remove() {
     assert_eq!(settings["password_hash"], serde_json::Value::Null);
 }
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn set_password_preserves_other_settings() {
     let dir = test_state_dir("preserve-settings");
@@ -367,6 +377,7 @@ fn set_password_preserves_other_settings() {
 
 // ── Migration legacy .signing_key (upstream auth.py:587-601) ─────────────
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn legacy_signing_key_hash_migrates() {
     let dir = test_state_dir("legacy-migration");
@@ -392,6 +403,7 @@ fn legacy_signing_key_hash_migrates() {
     assert!(!migrated);
 }
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn legacy_salt_equal_to_current_no_migration_attempt() {
     let dir = test_state_dir("legacy-equal");
@@ -408,6 +420,7 @@ fn legacy_salt_equal_to_current_no_migration_attempt() {
 
 // ── Env var HERMES_WEBUI_PASSWORD (priorité upstream auth.py:423) ────────
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn env_password_takes_precedence_over_settings() {
     let dir = test_state_dir("env-precedence");
@@ -432,6 +445,7 @@ fn env_password_takes_precedence_over_settings() {
     assert!(verify_password(&dir, "stored-password").0);
 }
 
+#[ignore = "coût 600k réel (~8s/hash en debug) — couvert par cargo test --release -- --ignored"]
 #[test]
 fn env_password_blank_is_ignored() {
     let dir = test_state_dir("env-blank");
