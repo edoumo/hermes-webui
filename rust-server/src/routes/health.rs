@@ -44,9 +44,16 @@ pub async fn health(State(state): State<AppState>, Query(q): Query<HealthQuery>)
     let started = state.server_started_at.elapsed().as_secs_f64();
     let server_started_at = now - started;
 
+    // Comptage réel des sessions du store JSON (Track B R2) — upstream
+    // expose le nombre de sidecars (api/routes.py health handler). Échec
+    // IO → 0 (fail-closed, status inchangé).
+    let session_count = crate::sessions::Store::new(state.config.state_dir.clone())
+        .count()
+        .unwrap_or(0);
+
     let mut payload: Value = json!({
         "status": "ok",
-        "sessions": 0,
+        "sessions": session_count,
         "active_streams": 0,
         "active_runs": 0,
         "runs": [],
@@ -61,9 +68,9 @@ pub async fn health(State(state): State<AppState>, Query(q): Query<HealthQuery>)
 
     if _flag_on(&q.deep) {
         // Upstream _deep_health_checks (api/routes.py:11704): streams_lock,
-        // stream_runtime, sessions, projects, state_db. The R0/R1 port has no
-        // sessions/projects/state.db yet, so counts are 0 and state_db is
-        // "missing" when the state dir has no state.db (upstream semantics).
+        // stream_runtime, sessions, projects, state_db. The port has no
+        // projects/state.db runtime yet, so those counts are 0 and state_db
+        // is "missing" when the state dir has no state.db (upstream semantics).
         let state_db_status = if state.config.state_dir.join("state.db").exists() {
             "ok"
         } else {
@@ -78,7 +85,7 @@ pub async fn health(State(state): State<AppState>, Query(q): Query<HealthQuery>)
                 "total_offline_buffered_events": 0,
                 "total_subscribers": 0,
             },
-            "sessions": {"status": "ok", "count": 0, "ms": 0.0},
+            "sessions": {"status": "ok", "count": session_count, "ms": 0.0},
             "projects": {"status": "ok", "count": 0, "ms": 0.0},
             "state_db": {"status": state_db_status, "ms": 0.0},
         });

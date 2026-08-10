@@ -289,18 +289,22 @@ impl Session {
     /// Apply user-driven rename semantics (port of `apply_session_title_rename`,
     /// `api/session_ops.py`). Non-empty custom titles are protected from
     /// adaptive refresh; clearing / resetting to an auto label re-arms it.
+    /// The 80-char cap is applied on character boundaries (safe for multi-byte
+    /// UTF-8 — slicing by byte count would panic on multi-byte titles).
     pub fn apply_title_rename(&mut self, raw_title: &str) -> String {
         let title = raw_title.trim();
         let title = if title.is_empty() { "Untitled" } else { title };
-        let truncated = &title[..title.char_indices().take(80).count().min(title.len())];
+        // Cap 80 chars sur frontières de caractères (safe multi-octets UTF-8 —
+        // le slice par octets paniqueit sur les titres accentués/émojis).
+        let truncated: String = title.chars().take(80).collect();
         let manual_title = !matches!(truncated.to_lowercase().as_str(), "untitled" | "new chat");
         self.data
-            .insert("title".into(), Value::String(truncated.to_string()));
+            .insert("title".into(), Value::String(truncated.clone()));
         self.data
             .insert("manual_title".into(), Value::Bool(manual_title));
         self.data
             .insert("llm_title_generated".into(), Value::Bool(false));
-        truncated.to_string()
+        truncated
     }
 
     /// Set `updated_at` to now and `message_count` to the message-array length
@@ -365,12 +369,16 @@ impl Session {
         m.insert("workspace".into(), Value::String(self.workspace()));
         m.insert(
             "model".into(),
-            self.model().map(Value::String).unwrap_or(Value::Null),
+            // Valeur brute : upstream compact() émet `self.model` tel quel
+            // (None → null, "" → ""). opt_string() traite "" comme absent —
+            // pas fidèle ici.
+            self.data.get("model").cloned().unwrap_or(Value::Null),
         );
         m.insert(
             "model_provider".into(),
-            self.model_provider()
-                .map(Value::String)
+            self.data
+                .get("model_provider")
+                .cloned()
                 .unwrap_or(Value::Null),
         );
         m.insert(

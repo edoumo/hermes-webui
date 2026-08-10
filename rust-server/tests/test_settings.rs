@@ -114,8 +114,16 @@ async fn settings_post_persists_and_returns_merged() {
 }
 
 #[tokio::test]
-async fn settings_post_password_change_refused_409() {
-    let app = build_router(test_state());
+async fn settings_post_password_change_env_precedence() {
+    // Séquence SÉQUENTIELLE dans un seul test : la var d'env globale est une
+    // course entre tests parallèles (piège documenté) — on ne la touche que
+    // ici, jamais dans deux tests concurrents.
+    let state = test_state();
+    let state_dir = state.config.state_dir.clone();
+
+    // 1) env posée → 409 (upstream routes.py:15944).
+    std::env::set_var("HERMES_WEBUI_PASSWORD", "env-override");
+    let app = build_router(state.clone());
     let resp = app
         .oneshot(
             Request::builder()
@@ -136,6 +144,30 @@ async fn settings_post_password_change_refused_409() {
         .as_str()
         .unwrap()
         .contains("HERMES_WEBUI_PASSWORD"));
+
+    // 2) env absente → le mot de passe est haché + persisté (Track B R3),
+    //    et le hash n'est JAMAIS exposé dans la réponse.
+    std::env::remove_var("HERMES_WEBUI_PASSWORD");
+    let app = build_router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/settings")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"_set_password": "hunter2"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(hermes_webui_rust::auth::password::is_password_auth_enabled(&state_dir));
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(v.get("password_hash").is_none()
+        || v.get("password_hash").and_then(Value::as_str).unwrap_or("") == "");
 }
 
 #[tokio::test]

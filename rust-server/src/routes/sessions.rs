@@ -152,6 +152,9 @@ pub async fn new_session(State(state): State<AppState>, Json(body): Json<Value>)
     let sid = store.generate_id();
 
     let mut session = Session::new(sid.clone());
+    // Défauts upstream (api/models.py Session.__init__ + routes.py:14567) :
+    // workspace = défaut résolu, profile = "default", model = "" (env
+    // HERMES_WEBUI_DEFAULT_MODEL, vide par défaut).
     if let Some(ws) = body.get("workspace").and_then(|v| v.as_str()) {
         session
             .data_mut()
@@ -160,6 +163,26 @@ pub async fn new_session(State(state): State<AppState>, Json(body): Json<Value>)
         session
             .data_mut()
             .insert("created_workspace".into(), Value::String(ws.to_string()));
+    } else {
+        let ws = crate::routes::settings::discover_default_workspace(&state);
+        session
+            .data_mut()
+            .insert("workspace".into(), Value::String(ws.clone()));
+        session
+            .data_mut()
+            .insert("created_workspace".into(), Value::String(ws));
+    }
+    // NB : Session::new() insère TOUTES les METADATA_FIELDS à Value::Null —
+    // les checks ci-dessous testent la VALEUR (null), pas la présence.
+    if matches!(session.data().get("profile"), None | Some(Value::Null)) {
+        session
+            .data_mut()
+            .insert("profile".into(), Value::String("default".into()));
+    }
+    if matches!(session.data().get("model"), None | Some(Value::Null)) {
+        session
+            .data_mut()
+            .insert("model".into(), Value::String(String::new()));
     }
     if let Some(m) = body.get("model").and_then(|v| v.as_str()) {
         session.set_model(Some(m.to_string()));

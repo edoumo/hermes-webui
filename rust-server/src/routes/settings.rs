@@ -151,6 +151,9 @@ const CONTROL_KEYS: &[&str] = &[
     "max_tokens",
     "max_tokens_effective",
     "max_tokens_fallback",
+    // password_hash ne doit JAMAIS être persisté ni exposé (upstream le
+    // filtre des deux côtés : settings/redaction + settings/disk du harnais).
+    "password_hash",
 ];
 
 /// Upstream `_SETTINGS_SPEECH_KEYS` (api/config.py:9355).
@@ -173,7 +176,7 @@ const SPEECH_KEYS: &[&str] = &[
 /// 3. ~/work if it exists
 /// 4. ~/workspace (create if needed)
 /// 5. STATE_DIR / workspace
-fn discover_default_workspace(state: &AppState) -> String {
+pub(crate) fn discover_default_workspace(state: &AppState) -> String {
     if let Ok(v) = std::env::var("HERMES_WEBUI_DEFAULT_WORKSPACE") {
         if !v.trim().is_empty() {
             return v.trim().to_string();
@@ -290,9 +293,11 @@ pub async fn post_settings(
         body.insert("bot_name".into(), json!(name));
     }
 
-    // Password control keys: the R0/R1 port has no auth runtime. Upstream
-    // refuses with 409 when HERMES_WEBUI_PASSWORD is set; without auth we
-    // refuse password changes the same way (fail closed, never silently no-op).
+    // Password control keys. Upstream (routes.py:15928-15951) :
+    // - `_set_password` (string non-vide) → hash + persist via set_password
+    // - `_clear_password` / `_passwordless` (bool) → clear_password
+    // - 409 SEULEMENT si HERMES_WEBUI_PASSWORD est posée (l'env override le
+    //   settings password — écrire le hash serait un no-op silencieux).
     let requested_password = body
         .get("_set_password")
         .and_then(|v| v.as_str())
@@ -306,7 +311,11 @@ pub async fn post_settings(
             .get("_passwordless")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-    if requested_password || requested_clear {
+    if (requested_password || requested_clear)
+        && std::env::var("HERMES_WEBUI_PASSWORD")
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    {
         return (
             StatusCode::CONFLICT,
             Json(json!({
@@ -315,6 +324,36 @@ pub async fn post_settings(
         )
             .into_response();
     }
+
+    if requested_password {
+        let plain = body
+            .get("_set_password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let hash = crate::auth::password::hash_password(&state.config.state_dir, &plain);
+        if !crate::auth::password::set_password(&state.config.state_dir, &hash) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "could not save password"})),
+            )
+                .into_response();
+        }
+        // Le hash ne doit jamais atteindre le disque via le body brut.
+        body.remove("_set_password");
+    }
+    if requested_clear {
+        if !crate::auth::password::clear_password(&state.config.state_dir) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "could not clear password"})),
+            )
+                .into_response();
+        }
+        body.remove("_clear_password");
+        body.remove("_passwordless");
+    }
+    body.remove("_current_password");
 
     // max_tokens is popped and stored as null (no agent runtime in R0/R1).
     body.remove("max_tokens");
