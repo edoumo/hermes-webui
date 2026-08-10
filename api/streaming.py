@@ -8499,6 +8499,11 @@ def _run_agent_streaming(
             if moa_config is not None:
                 _run_conversation_kwargs["moa_config"] = moa_config
             result = agent.run_conversation(**_run_conversation_kwargs)
+            # #4729: the run is done — flush any reasoning tail still in the coalescing
+            # buffer (the agent never calls reasoning_callback(None), and a turn can end on
+            # reasoning with no trailing token/tool boundary to trigger a flush) so the last
+            # sub-100ms window reaches the live Thinking view before the terminal done event.
+            _flush_reasoning_buffer()
             # Diagnostic for terminal-state reconciliation. Record only structural
             # metadata (never response text) so a provider-complete response that is
             # later misclassified can be traced across the agent/WebUI boundary.
@@ -8518,10 +8523,6 @@ def _run_agent_streaming(
                     result.get('completed'),
                     bool(str(result.get('error') or '').strip()),
                 )
-            # #4729: the run is done — flush any reasoning tail still in the coalescing
-            # buffer (the agent never calls reasoning_callback(None), and a turn can end on
-            # reasoning with no trailing token/tool boundary to trigger a flush) so the last
-            # sub-100ms window reaches the live Thinking view before the terminal done event.
             _flush_reasoning_buffer()
             if cancel_event.is_set():
                 if _checkpoint_stop is not None:
