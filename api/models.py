@@ -1098,7 +1098,15 @@ def _webui_session_store():
     with _WEBUI_SESSION_STORES_LOCK:
         store = _WEBUI_SESSION_STORES.get(key)
         if store is None:
-            store = SqliteSessionStore(db_path)
+            mode = _webui_session_store_mode()
+            # shadow: best-effort mirror — fail fast (2s) rather than hold the
+            # session lock for the full 15s busy window under state.db
+            # contention with the gateway (observed 2026-08-10: BEGIN IMMEDIATE
+            # blocked 15s under the session lock froze the UI and triggered a
+            # watchdog restart). sqlite: authoritative backend — keep the
+            # generous 15s busy timeout.
+            busy_timeout_ms = 2_000 if mode == 'shadow' else 15_000
+            store = SqliteSessionStore(db_path, busy_timeout_ms=busy_timeout_ms)
             _WEBUI_SESSION_STORES[key] = store
         return store
 
