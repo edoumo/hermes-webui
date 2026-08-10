@@ -1,0 +1,4 @@
+# Fixture workspace — fichier échantillon pour les scénarios workspace.
+# Copié par le harnais dans les workspaces isolés (python et rust) avant
+# les scénarios de lecture. Aucun secret.
+Contenu fixture du harnais compat v2.

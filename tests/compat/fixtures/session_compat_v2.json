@@ -1,0 +1,28 @@
+{
+  "session_id": "compatfixture01",
+  "title": "Fixture compat v2",
+  "workspace": "/tmp/hwui-compat-workspace",
+  "created_workspace": "/tmp/hwui-compat-workspace",
+  "model": "mock-model",
+  "model_provider": "mock-provider",
+  "profile": "default",
+  "created_at": 1754300000.0,
+  "updated_at": 1754300100.0,
+  "input_tokens": 12,
+  "output_tokens": 34,
+  "estimated_cost": 0.0,
+  "pinned": false,
+  "archived": false,
+  "messages": [
+    {
+      "id": "user-compatfixture01-1",
+      "role": "user",
+      "content": "Bonjour, fixture de test."
+    },
+    {
+      "id": "assistant-compatfixture01-1",
+      "role": "assistant",
+      "content": "Réponse fixture de test."
+    }
+  ]
+}
