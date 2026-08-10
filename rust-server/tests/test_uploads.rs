@@ -86,7 +86,9 @@ async fn post_upload(state: &AppState, content_type: &str, body: Body) -> (Statu
         .await
         .unwrap();
     let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
     (status, String::from_utf8_lossy(&bytes).to_string())
 }
 
@@ -252,7 +254,9 @@ async fn upload_oversized_body_413() {
         .await
         .unwrap();
     let status = resp.status();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let text = String::from_utf8_lossy(&bytes).to_string();
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "body: {text}");
     assert!(text.contains("File too large"));
@@ -305,10 +309,7 @@ async fn upload_many_small_files() {
         let (status, _) = post_upload(&state, &ct, body).await;
         assert_eq!(status, StatusCode::OK, "file {i}");
     }
-    let dir = state
-        .config
-        .state_dir
-        .join("attachments/abc123def456");
+    let dir = state.config.state_dir.join("attachments/abc123def456");
     let count = std::fs::read_dir(&dir).unwrap().count();
     assert_eq!(count, 20, "all files persisted");
 }

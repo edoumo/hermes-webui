@@ -74,9 +74,7 @@ fn session_attachment_dir(root: &Path, session_id: &str) -> PathBuf {
 fn upload_destination(root: &Path, session_id: &str, safe_name: &str) -> Result<PathBuf, String> {
     let dest_dir = session_attachment_dir(root, session_id);
     std::fs::create_dir_all(&dest_dir).map_err(|e| format!("cannot create attachment dir: {e}"))?;
-    let dest_dir = dest_dir
-        .canonicalize()
-        .unwrap_or_else(|_| dest_dir.clone());
+    let dest_dir = dest_dir.canonicalize().unwrap_or_else(|_| dest_dir.clone());
     let dest = dest_dir.join(safe_name);
     if !dest.starts_with(&dest_dir) {
         return Err("Invalid upload destination".into());
@@ -138,9 +136,7 @@ pub async fn handle_upload(
                 }
             }
             "file" => {
-                filename = field
-                    .file_name()
-                    .map(|s| s.to_string());
+                filename = field.file_name().map(|s| s.to_string());
                 match field.bytes().await {
                     Ok(bytes) => {
                         if bytes.len() as u64 > MAX_UPLOAD_BYTES {
@@ -194,10 +190,7 @@ pub async fn handle_upload(
         None => return error_response(StatusCode::BAD_REQUEST, "Invalid filename"),
     };
 
-    let root = state
-        .config
-        .state_dir
-        .join("attachments");
+    let root = state.config.state_dir.join("attachments");
     let dest = match upload_destination(&root, &session_id, &safe_name) {
         Ok(d) => d,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, &e),
