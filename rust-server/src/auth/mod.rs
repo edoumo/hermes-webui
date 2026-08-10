@@ -31,6 +31,8 @@ use sha2::Sha256;
 
 use crate::state::AppState;
 
+pub mod password;
+
 type HmacSha256 = Hmac<Sha256>;
 
 pub const SESSION_TTL_SECONDS: u64 = 86400 * 30; // 30 jours, upstream auth.py:28
@@ -142,21 +144,43 @@ fn get_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
     None
 }
 
-/// POST /api/auth/login — accepte un nom d'utilisateur si auth est désactivée
-/// (upstream : quand aucun password_hash n'est présent, auth est off). En R2
-/// on ne porte PAS le PBKDF2 réel : login est accepté sans mot de passe UNIQUEMENT
-/// sur state de test ; le flux password complet est documenté comme dette R3.
+/// POST /api/auth/login — vérifie le mot de passe PBKDF2 quand l'auth est
+/// activée (upstream : password_hash présent dans settings.json), sinon
+/// accepte sans mot de passe (auth désactivée, comportement R2 conservé).
+///
+/// R3 : le password réel est porté (src/auth/password.rs, PBKDF2 600k
+/// compatible upstream). Le hash 600k coûte ~0.8s en release (upstream
+/// identique) — c'est le coût voulu par la politique.
 pub async fn login(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
-    let _username = body.get("username").and_then(|v| v.as_str()).unwrap_or("");
-    // En R2 la fondation ne valide pas de mot de passe réel. On crée une session
-    // signée (déterministe, state test) pour prouver le flux auth.
+    let username = body.get("username").and_then(|v| v.as_str()).unwrap_or("");
+    let password = body.get("password").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Auth activée ? (upstream is_password_auth_enabled)
+    let auth_enabled = password::is_password_auth_enabled(&state.config.state_dir);
+    if auth_enabled {
+        // Vérification PBKDF2 réelle (comparaison constant-time interne).
+        let (ok, _migrated) = password::verify_password(&state.config.state_dir, password);
+        if !ok {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "ok": false,
+                    "logged_in": false,
+                    "error": "Invalid password",
+                })),
+            )
+                .into_response();
+        }
+    }
+
     let cookie = create_session(&state);
     let csrf = csrf_token_for_session(&state, &cookie);
     let mut resp = axum::response::Response::new(axum::body::Body::from(
         serde_json::to_string(&json!({
             "ok": true,
             "logged_in": true,
-            "auth_enabled": false,
+            "auth_enabled": auth_enabled,
+            "username": username,
             "csrf_token": csrf,
         }))
         .unwrap(),
@@ -208,11 +232,12 @@ pub async fn auth_status(
         .map(|c| verify_session(&state, c))
         .unwrap_or(false);
     let csrf = cookie.as_deref().map(|c| csrf_token_for_session(&state, c));
+    let password_auth_enabled = password::is_password_auth_enabled(&state.config.state_dir);
     (
         StatusCode::OK,
         Json(json!({
-            "auth_enabled": false,
-            "password_auth_enabled": false,
+            "auth_enabled": password_auth_enabled,
+            "password_auth_enabled": password_auth_enabled,
             "logged_in": logged_in,
             "csrf_token": csrf,
         })),

@@ -47,9 +47,6 @@ pub const SIGNING_KEY_FILE: &str = ".signing_key";
 /// Taille de clé générée (upstream `secrets.token_bytes(32)`).
 const KEY_LEN: usize = 32;
 
-/// Longueur du hash hex (32 octets → 64 chars).
-const HASH_HEX_LEN: usize = 64;
-
 /// PBKDF2-HMAC-SHA256 conforme RFC 2898, dkLen = 32 (un seul bloc T_1).
 /// Implémentation manuelle : `pbkdf2` n'est pas dans Cargo.toml (verrouillé),
 /// `hmac` + `sha2` y sont déjà. Vérifiée contre hashlib.pbkdf2_hmac (vecteurs

@@ -16,6 +16,10 @@ use hermes_webui_rust::config::Config;
 use hermes_webui_rust::state::AppState;
 
 fn test_state() -> AppState {
+    // L'env var HERMES_WEBUI_PASSWORD a priorité sur le hash stocké
+    // (auth.py:423) et peut être héritée du shell (prod) — la retirer rend
+    // les tests hermétiques (auth désactivée par défaut).
+    std::env::remove_var("HERMES_WEBUI_PASSWORD");
     let repo_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .canonicalize()
