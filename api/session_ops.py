@@ -411,7 +411,19 @@ def session_status(session_id: str) -> dict[str, Any]:
         'output_tokens': out,
         'total_tokens': inp + out,
         'estimated_cost': s.estimated_cost,
+        # Session rollover proposal (oversized sessions > 50 MiB). Additive
+        # field — existing consumers ignore it. Lets the frontend poll for a
+        # pending rollover banner without a dedicated SSE event.
+        'rollover': _rollover_status_payload(session_id),
     }
+
+
+def _rollover_status_payload(session_id: str) -> dict:
+    try:
+        from api.rollover import rollover_status
+        return rollover_status(session_id)
+    except Exception:
+        return {'status': 'none'}
 
 
 def session_usage(session_id: str) -> dict[str, Any]:

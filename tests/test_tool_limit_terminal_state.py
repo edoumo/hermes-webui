@@ -280,6 +280,65 @@ def test_streaming_tool_limit_without_final_answer_emits_no_final_apperror(tmp_p
     )
 
 
+def test_streaming_final_response_without_message_row_is_persisted_as_answer(tmp_path, monkeypatch):
+    """A completed agent final_response must not be misclassified as no_response.
+
+    Some adapters return the final text in ``final_response`` while their
+    ``messages`` replay ends at the last tool result.  The WebUI must materialize
+    that canonical final text before its silent-failure classifier runs.
+    """
+    final_response = "The requested work is complete."
+    result = {
+        "final_response": final_response,
+        "messages": [
+            {"role": "user", "content": "Do the long task."},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1"}]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "result"},
+        ],
+    }
+
+    events, payload = _run_streaming_with_fake_agent(tmp_path, monkeypatch, result)
+
+    assert any(event == "done" for event, _ in events)
+    assert not any(event == "apperror" for event, _ in events)
+    assistant = payload["messages"][-1]
+    assert assistant["role"] == "assistant"
+    assert assistant["content"] == final_response
+    assert not assistant.get("_partial")
+    assert not assistant.get("_error")
+
+
+def test_streaming_final_response_after_interim_assistant_and_tools_is_persisted(tmp_path, monkeypatch):
+    """An interim assistant note before later tools is not the final answer.
+
+    Ollama Cloud can return final_response while its messages replay includes an
+    earlier assistant progress note followed by tool rows. The WebUI must append
+    final_response rather than treating that intermediate note as terminal text.
+    """
+    final_response = "The requested work is complete after the tool results."
+    result = {
+        "status": "partial",
+        "partial": True,
+        "error": "",
+        "final_response": final_response,
+        "messages": [
+            {"role": "user", "content": "Do the long task."},
+            {"role": "assistant", "content": "I am checking the system."},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1"}]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "result"},
+        ],
+    }
+
+    events, payload = _run_streaming_with_fake_agent(tmp_path, monkeypatch, result)
+
+    assert any(event == "done" for event, _ in events)
+    assert not any(event == "apperror" for event, _ in events)
+    assert payload["messages"][-1]["role"] == "assistant"
+    assert payload["messages"][-1]["content"] == final_response
+    assert not payload["messages"][-1].get("_partial")
+    assert not payload["messages"][-1].get("_error")
+
+
 def test_streaming_tool_limit_with_fallback_final_response_surfaces_closure_text(tmp_path, monkeypatch):
     """#5494 — handle_max_iterations() guarantees a non-empty ``final_response``
     on iteration-limit exhaustion. This test pins the WebUI contract that,

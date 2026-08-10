@@ -285,11 +285,11 @@ def test_auth_401_classification_receives_stringified_probe_text(tmp_path, monke
     observed = {}
     real_classify = streaming._classify_provider_error
 
-    def _spy_classify_provider_error(err_str, exc=None, *, silent_failure=False):
+    def _spy_classify_provider_error(err_str, exc=None, *, silent_failure=False, **kwargs):
         observed["err_str"] = err_str
         observed["exc"] = exc
         observed["silent_failure"] = silent_failure
-        return real_classify(err_str, exc, silent_failure=silent_failure)
+        return real_classify(err_str, exc, silent_failure=silent_failure, **kwargs)
 
     with mock.patch.object(streaming, "_classify_provider_error", side_effect=_spy_classify_provider_error):
         _run_stream(monkeypatch, session, "stream_auth_probe_text", agent_cls, workspace=str(tmp_path))
@@ -570,7 +570,17 @@ def test_stale_partial_with_unfinished_tool_call_still_reports_no_response(tmp_p
     assert saved.messages[-1]["_error"] is True
 
 
-def test_stale_partial_repeated_prompt_replay_still_reports_no_response(tmp_path, monkeypatch):
+def test_stale_partial_repeated_prompt_replay_reports_interrupted(tmp_path, monkeypatch):
+    """When the provider streamed text before a stale replay, the turn is
+    ``interrupted`` (provider was active), not ``no_response`` (#5512).
+
+    The agent streams "Partial text before stale replay" via the delta
+    callback, so _token_sent is True.  The result has status=partial with no
+    error.  Previously this was misclassified as no_response because the
+    _partial message had not yet been appended to s.messages when the
+    classifier ran.  The fallback scan now checks _token_sent and the live
+    streaming buffers, correctly yielding ``interrupted``.
+    """
     session = _prepare_session(
         "repeated_prompt_replay_stale_partial",
         "stream_repeated_prompt_replay_stale_partial",
@@ -606,12 +616,12 @@ def test_stale_partial_repeated_prompt_replay_still_reports_no_response(tmp_path
     events = _queue_events(fake_queue)
     apperrors = [data for event, data in events if event == "apperror"]
     assert apperrors, "expected apperror for repeated-prompt stale replay"
-    assert apperrors[-1]["type"] == "no_response"
+    assert apperrors[-1]["type"] == "interrupted"
     assert not any(event == "done" for event, _ in events)
     assert saved.messages[-1]["_error"] is True
 
 
-def test_hard_failure_with_completed_answer_still_reports_no_response(tmp_path, monkeypatch):
+def test_completed_assistant_answer_overrides_stale_failed_status(tmp_path, monkeypatch):
     session = _prepare_session(
         "hard_failure_completed_answer",
         "stream_hard_failure_completed_answer",
@@ -621,6 +631,8 @@ def test_hard_failure_with_completed_answer_still_reports_no_response(tmp_path, 
     class HardFailureCompletedAnswerAgent(MockAgent):
         def run_conversation(self, **kwargs):
             history = list(kwargs.get("conversation_history") or [])
+            if self.stream_delta_callback is not None:
+                self.stream_delta_callback("Completed answer")
             return {
                 "status": "failed",
                 "messages": history + [{"role": "assistant", "content": "Completed answer"}],
@@ -638,11 +650,11 @@ def test_hard_failure_with_completed_answer_still_reports_no_response(tmp_path, 
     assert saved is not None
 
     events = _queue_events(fake_queue)
-    apperrors = [data for event, data in events if event == "apperror"]
-    assert apperrors, "expected apperror for hard failed result"
-    assert apperrors[-1]["type"] == "no_response"
-    assert not any(event == "done" for event, _ in events)
-    assert saved.messages[-1]["_error"] is True
+    assert any(event == "done" for event, _ in events)
+    assert not any(event == "apperror" for event, _ in events)
+    assert saved.messages[-1]["role"] == "assistant"
+    assert saved.messages[-1]["content"] == "Completed answer"
+    assert not any(msg.get("_error") for msg in saved.messages)
 
 
 def test_non_auth_partial_delivery_persists_error_turn(tmp_path, monkeypatch):
@@ -668,7 +680,7 @@ def test_non_auth_partial_delivery_persists_error_turn(tmp_path, monkeypatch):
     events = _queue_events(fake_queue)
     apperrors = [data for event, data in events if event == "apperror"]
     assert apperrors, "expected apperror for partial silent failure"
-    assert apperrors[-1]["type"] == "no_response"
+    assert apperrors[-1]["type"] == "interrupted"
     assert saved.messages[-1]["_error"] is True
 
 
@@ -700,7 +712,7 @@ def test_non_auth_seeded_multi_turn_partial_persists_error_turn(tmp_path, monkey
     events = _queue_events(fake_queue)
     apperrors = [data for event, data in events if event == "apperror"]
     assert apperrors, "expected apperror for seeded partial silent failure"
-    assert apperrors[-1]["type"] == "no_response"
+    assert apperrors[-1]["type"] == "interrupted"
     assert not any(event == "done" for event, _ in events)
 
 

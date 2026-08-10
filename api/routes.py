@@ -12355,6 +12355,20 @@ def handle_get(handler, parsed) -> bool:
             _t1 = _time.monotonic()
             if _diag: _diag.stage("t1_after_get_session_check")
             s = get_session(sid, metadata_only=(not load_messages))
+            # ── Session rollover proposal at OPEN time ─────────────────────
+            # The end-of-turn hook alone misses oversized sessions that are
+            # only viewed (GET /api/session) without a new message. Detect
+            # here too — the session object is already loaded, so this is a
+            # cheap stat() + flag check; the summary LLM call runs in its own
+            # daemon thread. Non-fatal by design.
+            try:
+                from api.rollover import maybe_propose_rollover
+
+                maybe_propose_rollover(sid, session=s)
+            except Exception:
+                logger.debug(
+                    "session-open rollover proposal failed for %s", sid, exc_info=True
+                )
             _session_profile = getattr(s, 'profile', None) or None
             if not _session_visible_to_active_profile(_session_profile, handler):
                 if _session_profile:
@@ -14776,6 +14790,29 @@ def handle_post(handler, parsed) -> bool:
         return j(
             handler, {"ok": True, "session": s.compact() | {"messages": s.messages}}
         )
+
+    if parsed.path == "/api/session/rollover":
+        # Session rollover with summary: create a continuation session with a
+        # generated summary, archive the oversized source (reversible copy).
+        # Accepts: {session_id, action?}  action: "now" | "later" | "auto"
+        try:
+            require(body, "session_id")
+        except ValueError as e:
+            return bad(handler, str(e))
+        if not isinstance(body["session_id"], str):
+            return bad(handler, "session_id must be a string")
+        action = str(body.get("action") or "now").strip().lower()
+        if action not in ("now", "later", "auto"):
+            return bad(handler, "action must be one of: now, later, auto")
+        try:
+            from api.rollover import resolve_rollover
+            result = resolve_rollover(body["session_id"], action)
+        except Exception as e:
+            logger.exception("rollover endpoint failed for %s", body["session_id"])
+            return bad(handler, f"Rollover failed: {e}", status=500)
+        if result.get("status") == "failed":
+            return bad(handler, f"Rollover failed: {result.get('error', 'unknown')}", status=500)
+        return j(handler, result)
 
     if parsed.path == "/api/session/branch":
         # Fork a conversation from any message point (#465).

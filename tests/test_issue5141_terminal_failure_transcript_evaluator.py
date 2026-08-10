@@ -126,3 +126,67 @@ def test_merged_wrapper_delegates_to_turn_evaluator():
     assert calls[0]["source"] == "cli"
     assert calls[0]["drop_replayed_assistant"] is True
     assert calls[0]["merged_len"] >= 1
+
+
+def test_completed_result_with_nonempty_final_response_is_authoritative():
+    result = {
+        "completed": True,
+        "failed": False,
+        "partial": False,
+        "error": "",
+        "final_response": "The canonical completion.",
+    }
+
+    assert streaming._result_has_authoritative_final_response(result) is True
+
+
+def test_final_response_fallback_uses_merged_current_turn_after_long_replay():
+    # The agent replay can contain a previous answer that is not the active turn.
+    # The fallback must instead inspect the display transcript after merge, where
+    # the current user boundary is explicit.
+    previous_display = [
+        {"role": "user", "content": "same request"},
+        {"role": "assistant", "content": "older completed answer"},
+    ]
+    merged_display = previous_display + [
+        {"role": "user", "content": "same request"},
+    ]
+    result = {
+        "completed": True,
+        "partial": False,
+        "final_response": "authoritative current answer",
+        "messages": list(previous_display),
+    }
+
+    reconciled = streaming._maybe_inject_final_response_fallback(
+        merged_display,
+        result,
+        previous_display,
+        "same request",
+    )
+
+    assert reconciled[-1]["role"] == "assistant"
+    assert reconciled[-1]["content"] == "authoritative current answer"
+    assert reconciled[-1]["_final_response_fallback"] is True
+    assert streaming._turn_transcript_lacks_final_assistant_answer(
+        reconciled,
+        previous_display,
+        "same request",
+    ) is False
+
+
+def test_final_response_fallback_does_not_duplicate_merged_current_answer():
+    previous_display = [{"role": "user", "content": "older"}]
+    merged_display = previous_display + [
+        {"role": "user", "content": "current"},
+        {"role": "assistant", "content": "already persisted"},
+    ]
+
+    reconciled = streaming._maybe_inject_final_response_fallback(
+        merged_display,
+        {"completed": True, "final_response": "authoritative current answer"},
+        previous_display,
+        "current",
+    )
+
+    assert reconciled == merged_display

@@ -1147,11 +1147,27 @@ def _provider_error_probe_text(value) -> tuple[str, int | None]:
     return ' '.join(t for t in _texts if t).strip(), _status_code
 
 
-def _classify_provider_error(err_str: str, exc=None, *, silent_failure: bool = False) -> dict:
+def _classify_provider_error(
+    err_str: str,
+    exc=None,
+    *,
+    silent_failure: bool = False,
+    partial_tool_calls: list | None = None,
+    partial_has_content: bool = False,
+) -> dict:
     """Classify provider/agent failure text for WebUI apperror UX.
 
     Keep this string-based until hermes-agent exposes stable structured
     provider error classes for Codex OAuth plan limits.
+
+    ``partial_tool_calls`` / ``partial_has_content``: when the streaming
+    snapshot produced a ``_partial`` assistant message carrying tool calls
+    or non-empty content, the provider *did* respond — it made tool calls
+    or streamed text before the turn ended.  A silent-failure
+    classification must NOT label this ``no_response`` (the provider never
+    responded); it must be ``interrupted`` (the provider was active but
+    did not finish cleanly).  These flags are only consulted when
+    ``silent_failure`` is True (no concrete error string to classify).
     """
     _probe_text, _probe_status_code = _provider_error_probe_text(err_str)
     if exc is not None:
@@ -1281,6 +1297,24 @@ def _classify_provider_error(err_str: str, exc=None, *, silent_failure: bool = F
             'hint': 'The conversation context is too large to compress safely. Start a new conversation or retry with a narrower task.',
         }
     if silent_failure:
+        # When the streaming snapshot captured a ``_partial`` assistant
+        # message with tool calls or non-empty content, the provider was
+        # actively responding (it made tool calls or streamed text) before
+        # the turn ended without a clean finish.  This is NOT a
+        # ``no_response`` (the provider never responded) — it is an
+        # ``interrupted`` turn.  Classifying it as ``no_response`` produced
+        # false-positive incidents because the watchdog scans for that
+        # marker string in persisted session transcripts.
+        _partial_provider_was_active = (
+            bool(partial_tool_calls)
+            or partial_has_content
+        )
+        if _partial_provider_was_active:
+            return {
+                'label': 'Response interrupted',
+                'type': 'interrupted',
+                'hint': 'The provider started responding but the turn ended before a complete response. This often happens after context compression or a mid-stream interruption. Try again or continue the conversation.',
+            }
         return {
             'label': 'No response from provider',
             # Preserve the existing no_response event type (#373) while making
@@ -1390,6 +1424,85 @@ def _agent_result_tool_limit_reached(result) -> bool:
     ):
         return True
     return False
+
+
+def _result_has_authoritative_final_response(result) -> bool:
+    """Whether the agent has canonically completed this turn with a final answer.
+
+    ``result`` is the direct return value of ``run_conversation()``.  Unlike a
+    replayed display transcript it is not affected by context compression,
+    durable checkpoint timing, or message merge heuristics.  A complete result
+    must therefore prevent the WebUI from emitting a synthetic ``no_response``.
+
+    A tool-limit turn (``max_iterations_reached``) returns ``completed=False``
+    because the iteration budget was exhausted, but the agent still produces a
+    non-empty ``final_response`` via ``_handle_max_iterations()``.  That summary
+    is an authoritative answer — the provider *did* respond — so it must also
+    suppress a false ``no_response``.  Without this, a stale
+    ``agent._last_error`` from a prior retried API call within the same turn
+    causes ``_drop_replayed_assistant`` to drop the valid summary, the
+    transcript appears to lack a final answer, and the silent-failure
+    classifier emits a false ``no_response`` error.
+    """
+    if not isinstance(result, dict):
+        return False
+    final_response = result.get("final_response")
+    if not (isinstance(final_response, str) and bool(final_response.strip())):
+        return False
+    if result.get("failed") or result.get("partial"):
+        return False
+    if str(result.get("error") or "").strip():
+        return False
+    # completed=True → canonical success.
+    if result.get("completed") is True:
+        return True
+    # completed=False but tool-limit reached with a non-empty final_response:
+    # the agent produced a summary via _handle_max_iterations(); treat it as
+    # authoritative so the WebUI does not emit a false no_response.
+    if _agent_result_tool_limit_reached(result):
+        return True
+    return False
+
+
+def _maybe_inject_final_response_fallback(
+    merged_messages,
+    result,
+    previous_display,
+    msg_text,
+    *,
+    source: str = "webui",
+) -> list:
+    """Materialize ``final_response`` on the same merged turn used for failure detection.
+
+    Agent result replay can be a compacted or stale slice rather than an append-only
+    suffix.  Evaluating that raw slice may mistake an earlier assistant answer for
+    the current turn, then the display merge correctly reports no answer and emits
+    a false ``no_response``.  Evaluate only the already-merged display transcript,
+    which is also the representation used by terminal-failure classification.
+    Concrete agent errors remain authoritative and are never converted into a
+    successful answer here.
+    """
+    out = list(merged_messages or [])
+    if not isinstance(result, dict):
+        return out
+    fallback = result.get('final_response')
+    if not isinstance(fallback, str) or not fallback.strip():
+        return out
+    if str(result.get('error') or '').strip():
+        return out
+    if not _turn_transcript_lacks_final_assistant_answer(
+        out,
+        previous_display,
+        msg_text,
+        source=source,
+    ):
+        return out
+    out.append({
+        "role": "assistant",
+        "content": fallback.strip(),
+        "_final_response_fallback": True,
+    })
+    return out
 
 
 def _maybe_inject_max_iteration_summary_fallback(messages, result) -> list:
@@ -5555,6 +5668,10 @@ def _session_lacks_final_assistant_answer(messages) -> bool:
             continue
         if msg.get('_error'):
             return False
+        if msg.get('_partial'):
+            # A streaming partial is not a committed final answer — skip it
+            # so the caller can still inject final_response or emit an error.
+            continue
         if _is_context_compression_marker(msg):
             continue
         role = msg.get('role')
@@ -5591,10 +5708,13 @@ def _turn_transcript_lacks_final_assistant_answer(
     merged_messages = list(merged_messages or [])
     previous_display = list(previous_display or [])
     current_user_idx = _find_current_user_turn(merged_messages, msg_text)
-    if current_user_idx is None or current_user_idx < len(previous_display):
+    if current_user_idx is None or current_user_idx < len(previous_display) - 1:
         # The active turn lives after the durable transcript boundary. If the
         # merged display only exposes an older user row, materialize the pending
         # prompt so a replayed assistant row cannot satisfy the wrong turn.
+        # When current_user_idx == len(previous_display) - 1 the eager-save
+        # checkpoint already persisted this turn's user message as the last
+        # element of previous_display — do NOT materialize a duplicate.
         pending_user = {
             'role': 'user',
             'content': msg_text,
@@ -8379,6 +8499,25 @@ def _run_agent_streaming(
             if moa_config is not None:
                 _run_conversation_kwargs["moa_config"] = moa_config
             result = agent.run_conversation(**_run_conversation_kwargs)
+            # Diagnostic for terminal-state reconciliation. Record only structural
+            # metadata (never response text) so a provider-complete response that is
+            # later misclassified can be traced across the agent/WebUI boundary.
+            if isinstance(result, dict):
+                _final_response = result.get('final_response')
+                logger.info(
+                    "[webui] agent result summary: session=%s stream=%s keys=%s "
+                    "final_response_len=%d messages=%d status=%r partial=%r "
+                    "completed=%r error_present=%s",
+                    session_id,
+                    stream_id,
+                    sorted(result.keys()),
+                    len(_final_response) if isinstance(_final_response, str) else 0,
+                    len(result.get('messages') or []),
+                    result.get('status') or result.get('state'),
+                    result.get('partial'),
+                    result.get('completed'),
+                    bool(str(result.get('error') or '').strip()),
+                )
             # #4729: the run is done — flush any reasoning tail still in the coalescing
             # buffer (the agent never calls reasoning_callback(None), and a turn can end on
             # reasoning with no trailing token/tool boundary to trigger a flush) so the last
@@ -8491,8 +8630,8 @@ def _run_agent_streaming(
                         _result_messages = _maybe_inject_max_iteration_summary_fallback(
                             _result_messages, result
                         )
-                        if isinstance(result, dict):
-                            result = {**result, 'messages': _result_messages}
+                    if isinstance(result, dict):
+                        result = {**result, 'messages': _result_messages}
                     if cancel_event.is_set():
                         _finalize_cancelled_turn(s, ephemeral=False)
                         try:
@@ -8529,13 +8668,41 @@ def _run_agent_streaming(
                         msg_text,
                     )
                     s.context_messages = _deduplicate_context_messages(_next_context_messages)
+                    _turn_source = getattr(s, 'pending_user_source', None) or 'webui'
                     s.messages = _merge_display_messages_after_agent_result(
                         _previous_messages,
                         _previous_context_messages,
                         _restore_display_reasoning_metadata(_previous_messages, _result_messages),
                         msg_text,
-                        source=getattr(s, 'pending_user_source', None) or 'webui',
+                        source=_turn_source,
                     )
+                    # Reconcile final_response only after display merge. The merged
+                    # transcript is the authoritative current-turn boundary used by
+                    # terminal-failure classification; raw agent replay can contain
+                    # stale or compacted history that points at an earlier answer.
+                    if not _tool_limit_reached:
+                        _merged_with_final_response = _maybe_inject_final_response_fallback(
+                            s.messages,
+                            result,
+                            _previous_messages,
+                            msg_text,
+                            source=_turn_source,
+                        )
+                        if len(_merged_with_final_response) > len(s.messages):
+                            _fallback_message = _merged_with_final_response[-1]
+                            s.messages = _merged_with_final_response
+                            _result_messages = list(_result_messages) + [_fallback_message]
+                            _next_context_messages = list(_next_context_messages) + [_fallback_message]
+                            _assign_stable_message_ids(
+                                _result_messages,
+                                _previous_messages,
+                                _previous_context_messages,
+                            )
+                            s.context_messages = _deduplicate_context_messages(
+                                _next_context_messages
+                            )
+                            if isinstance(result, dict):
+                                result = {**result, 'messages': _result_messages}
                     _advance_truncation_watermark_after_commit(s)  # #3831
                 # Strip XML tool-call blocks from assistant message content.
                 # DeepSeek and some other providers emit <function_calls>...</function_calls>
@@ -8691,11 +8858,76 @@ def _run_agent_streaming(
                     _previous_context_messages,
                     msg_text,
                 )
+                # Reconcile _assistant_added with the merged display transcript.
+                # The raw agent replay can be compacted or stale while s.messages
+                # already carries the current-turn answer (injected by the
+                # final_response fallback above, or merged from a prior turn).
+                # Without this reconciliation, the `not _assistant_added and
+                # not _token_sent` guard below emits a false no_response error
+                # even though the user-visible transcript is complete.
+                if not _assistant_added:
+                    _assistant_added = not _turn_transcript_lacks_final_assistant_answer(
+                        s.messages,
+                        _previous_messages,
+                        msg_text,
+                        source=getattr(s, 'pending_user_source', None) or 'webui',
+                    )
+                _authoritative_completed_result = _result_has_authoritative_final_response(result)
+                # The canonical result is the agent/WebUI boundary of record. A
+                # compressed/stale replay must not turn a completed result into a
+                # synthetic no_response error. `_last_err` is deliberately not
+                # consulted here: it can retain a failed retry from earlier in a
+                # turn even though the final result returned successfully.
+                if _authoritative_completed_result:
+                    _assistant_added = True
                 _last_err = getattr(agent, '_last_error', None) or result.get('error') or ''
+                # Gather partial-activity evidence from the current transcript.
+                # When the streaming snapshot captured a ``_partial`` assistant
+                # message with tool calls or non-empty content, the provider was
+                # actively responding before the turn ended.  The classifier uses
+                # this to distinguish ``interrupted`` (provider was active) from
+                # ``no_response`` (provider never responded).
+                _partial_tc_for_classify: list | None = None
+                _partial_has_content_for_classify = False
+                for _pm in reversed(s.messages or []):
+                    if not isinstance(_pm, dict):
+                        continue
+                    if _pm.get('_error'):
+                        break
+                    if _pm.get('_partial'):
+                        _ptc = _pm.get('_partial_tool_calls')
+                        if isinstance(_ptc, list) and _ptc:
+                            _partial_tc_for_classify = _ptc
+                        _pc = str(_pm.get('content') or '')
+                        if _pc.strip():
+                            _partial_has_content_for_classify = True
+                        break
+                # Fallback: the _partial message may not have been appended to
+                # s.messages yet (it is materialised by
+                # _snapshot_and_append_partial_on_error later in this block at
+                # line ~9159).  When the scan above found nothing in s.messages,
+                # consult the live streaming buffers and the _token_sent flag
+                # so a turn that streamed text or tool calls is classified as
+                # ``interrupted`` instead of a false ``no_response``. (#5512)
+                if _partial_tc_for_classify is None and not _partial_has_content_for_classify:
+                    with STREAMS_LOCK:
+                        _live_tc = list(STREAM_LIVE_TOOL_CALLS.get(stream_id, []) or [])
+                        _live_text = STREAM_PARTIAL_TEXT.get(stream_id, '') or ''
+                    if _live_tc:
+                        _partial_tc_for_classify = _live_tc
+                    if _live_text.strip():
+                        _partial_has_content_for_classify = True
+                    # _token_sent is the last-resort indicator: the provider
+                    # streamed visible text (on_token fired), so it WAS
+                    # responding even if the buffers were already cleared.
+                    if not _partial_tc_for_classify and not _partial_has_content_for_classify and _token_sent:
+                        _partial_has_content_for_classify = True
                 _classification = _classify_provider_error(
                     str(_last_err) if _last_err else '',
                     _last_err,
                     silent_failure=not bool(_last_err),
+                    partial_tool_calls=_partial_tc_for_classify,
+                    partial_has_content=_partial_has_content_for_classify,
                 )
                 _is_quota = _classification['type'] == 'quota_exhausted'
                 _is_auth = _classification['type'] == 'auth_mismatch'
@@ -8704,10 +8936,9 @@ def _run_agent_streaming(
                     or bool(getattr(agent, '_last_error', None))
                     or ('error' in result and result.get('error') is not None)
                 )
-                _saved_transcript_lacks_final_answer = _merged_transcript_lacks_final_assistant_answer(
+                _saved_transcript_lacks_final_answer = _turn_transcript_lacks_final_assistant_answer(
+                    s.messages,
                     _previous_messages,
-                    _previous_context_messages,
-                    _all_result_messages,
                     msg_text,
                     source=getattr(s, 'pending_user_source', None) or 'webui',
                     drop_replayed_assistant=_drop_replayed_assistant,
@@ -8717,24 +8948,40 @@ def _run_agent_streaming(
                     _is_agent_result_terminal
                     or (
                         _saved_transcript_lacks_final_answer
-                        and _classification['type'] not in {'cancelled', 'interrupted'}
+                        and _classification['type'] not in {'cancelled'}
                     )
                 )
-                _result_status = str(result.get('status') or result.get('state') or '').strip().lower()
-                _soft_partial_terminal_failure = (
+                # A terminal status can be stale: some providers/adapters report
+                # ``failed``/``partial`` despite returning a complete assistant
+                # message.  Treat the merged current-turn answer as authoritative
+                # when there is no concrete error.  Otherwise a generic
+                # ``no_response`` would replace an already recoverable answer.
+                _stale_terminal_status_with_complete_answer = (
                     _is_agent_result_terminal
-                    and (_result_status == 'partial' or bool(result.get('partial')))
-                    and _result_status not in {'failed', 'error', 'compression_exhausted'}
-                    and not result.get('failed')
-                    and not result.get('compression_exhausted')
+                    and not _saved_transcript_lacks_final_answer
                     and not _tool_limit_reached
                     and not _last_err
+                    and _classification['type'] in {'no_response', 'interrupted'}
                 )
-                if (
-                    _terminal_failure
-                    and _soft_partial_terminal_failure
-                    and _classification['type'] == 'no_response'
-                    and not _saved_transcript_lacks_final_answer
+                # When the agent result is NOT terminal (completed=True) but
+                # _saved_transcript_lacks_final_answer is True due to
+                # drop_replayed_assistant dropping a valid response (because
+                # agent._last_error was set from a prior retried API call),
+                # the reconciliation in Fix B already confirmed _assistant_added.
+                # Don't let _terminal_failure override it and inject a false
+                # "No response from provider" error.
+                _completed_with_reconciled_answer = (
+                    not _is_agent_result_terminal
+                    and _assistant_added
+                    and not _last_err
+                    and result.get('completed')
+                    and not result.get('failed')
+                    and not result.get('partial')
+                )
+                if _terminal_failure and (
+                    _authoritative_completed_result
+                    or _stale_terminal_status_with_complete_answer
+                    or _completed_with_reconciled_answer
                 ):
                     _terminal_failure = False
                 if _terminal_failure:
@@ -10282,6 +10529,20 @@ def _run_agent_streaming(
         except Exception:
             logger.debug(
                 "turn-teardown deferred-wakeup drain failed for session %s",
+                session_id,
+                exc_info=True,
+            )
+
+        # ── Session rollover proposal (oversized sessions > 50 MiB) ────────
+        # Cheap stat() + flag check; the summary LLM call runs in its own
+        # daemon thread, so teardown never blocks. Non-fatal by design.
+        try:
+            from api.rollover import maybe_propose_rollover
+
+            maybe_propose_rollover(session_id)
+        except Exception:
+            logger.debug(
+                "turn-teardown rollover proposal failed for session %s",
                 session_id,
                 exc_info=True,
             )

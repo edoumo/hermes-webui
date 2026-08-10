@@ -185,7 +185,7 @@ def test_terminal_failure_gates_shape_check_to_no_streamed_text():
     assert "_is_agent_result_terminal = _agent_result_terminal_failure(result)" in block
     assert "_is_agent_result_terminal" in block
     assert "_saved_transcript_lacks_final_answer" in block
-    assert "_classification['type'] not in {'cancelled', 'interrupted'}" in block
+    assert "_classification['type'] not in {'cancelled'}" in block
     assert "not _token_sent" not in block
     assert "_session_lacks_final_assistant_answer(_all_result_messages)" not in block
 
@@ -249,6 +249,19 @@ def test_context_compaction_marker_before_tool_tail_is_not_final_answer():
             "role": "assistant",
             "content": "I will inspect the result.",
             "tool_calls": [{"id": "call_1"}],
+        },
+    ]
+
+    assert _session_lacks_final_assistant_answer(messages) is True
+
+
+def test_partial_assistant_text_is_not_a_final_answer():
+    messages = [
+        {"role": "user", "content": "Run the task."},
+        {
+            "role": "assistant",
+            "content": "Visible streamed progress that was snapshotted after an error.",
+            "_partial": True,
         },
     ]
 
