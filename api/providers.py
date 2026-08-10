@@ -80,7 +80,7 @@ _ACCOUNT_USAGE_SUBPROCESS_TIMEOUT_SECONDS = 35.0
 _ACCOUNT_USAGE_CACHE_TTL_SECONDS = 45.0
 _ACCOUNT_USAGE_CACHE_MAX_ENTRIES = 64
 _ACCOUNT_USAGE_WORKER_IDLE_SECONDS = 5 * 60
-_ACCOUNT_USAGE_PROVIDERS = frozenset({"openai-codex", "anthropic"})
+_ACCOUNT_USAGE_PROVIDERS = frozenset({"openai-codex", "anthropic", "ollama-cloud"})
 
 # Upper bound on simultaneous profile-isolated quota probe subprocesses.
 # Each probe runs a Python child for up to 35 s; capping concurrency prevents

@@ -52,6 +52,7 @@ PUBLIC_PATHS = frozenset({
     '/login', '/health', '/favicon.ico', '/sw.js',
     '/api/auth/login', '/api/auth/status',
     '/api/auth/oidc/start', '/api/auth/oidc/callback',
+    '/api/debug/memory',
     '/api/auth/passkey/options', '/api/auth/passkey/login',
     '/share',
     '/manifest.json', '/manifest.webmanifest',

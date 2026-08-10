@@ -1095,6 +1095,9 @@ CLI_TOOLSETS = _resolve_cli_toolsets()
 # Also used as the OpenRouter model list — keep this curated to current, widely-used models.
 _FALLBACK_MODELS = [
     # OpenAI
+    {"provider": "OpenAI",    "id": "openai/gpt-5.6-sol",                 "label": "GPT-5.6 Sol"},
+    {"provider": "OpenAI",    "id": "openai/gpt-5.6-terra",               "label": "GPT-5.6 Terra"},
+    {"provider": "OpenAI",    "id": "openai/gpt-5.6-luna",                "label": "GPT-5.6 Luna"},
     {"provider": "OpenAI",    "id": "openai/gpt-5.4-mini",                "label": "GPT-5.4 Mini"},
     {"provider": "OpenAI",    "id": "openai/gpt-5.4",                     "label": "GPT-5.4"},
     # Anthropic — 4.6 flagship + 4.5 generation
@@ -1629,18 +1632,27 @@ _PROVIDER_MODELS = {
         {"id": "claude-haiku-4-5", "label": "Claude Haiku 4.5"},
     ],
     "openai": [
+        {"id": "gpt-5.6-sol",   "label": "GPT-5.6 Sol"},
+        {"id": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
+        {"id": "gpt-5.6-luna",  "label": "GPT-5.6 Luna"},
         {"id": "gpt-5.5",      "label": "GPT-5.5"},
         {"id": "gpt-5.5-mini", "label": "GPT-5.5 Mini"},
         {"id": "gpt-5.4-mini", "label": "GPT-5.4 Mini"},
         {"id": "gpt-5.4",      "label": "GPT-5.4"},
     ],
     "openai-api": [
+        {"id": "gpt-5.6-sol",   "label": "GPT-5.6 Sol"},
+        {"id": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
+        {"id": "gpt-5.6-luna",  "label": "GPT-5.6 Luna"},
         {"id": "gpt-5.5",      "label": "GPT-5.5"},
         {"id": "gpt-5.5-mini", "label": "GPT-5.5 Mini"},
         {"id": "gpt-5.4-mini", "label": "GPT-5.4 Mini"},
         {"id": "gpt-5.4",      "label": "GPT-5.4"},
     ],
     "openai-codex": [
+        {"id": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
+        {"id": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
+        {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
         {"id": "gpt-5.5", "label": "GPT-5.5"},
         {"id": "gpt-5.5-mini", "label": "GPT-5.5 Mini"},
         {"id": "gpt-5.4", "label": "GPT-5.4"},
