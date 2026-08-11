@@ -161,13 +161,17 @@ async fn settings_post_password_change_env_precedence() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    assert!(hermes_webui_rust::auth::password::is_password_auth_enabled(&state_dir));
+    assert!(hermes_webui_rust::auth::password::is_password_auth_enabled(
+        &state_dir
+    ));
     let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
         .await
         .unwrap();
     let v: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(v.get("password_hash").is_none()
-        || v.get("password_hash").and_then(Value::as_str).unwrap_or("") == "");
+    assert!(
+        v.get("password_hash").is_none()
+            || v.get("password_hash").and_then(Value::as_str).unwrap_or("") == ""
+    );
 }
 
 #[tokio::test]
