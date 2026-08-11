@@ -63,12 +63,15 @@ pub struct AppState {
     pub session_store: crate::auth::SessionStore,
     /// Challenge store WebAuthn (mémoire, TTL 90s, single-use).
     pub challenge_store: crate::auth::webauthn::ChallengeStore,
+    /// Login rate limiter (R4) — 5 tentatives / 60 s, fichier .login_attempts.json.
+    pub rate_limiter: crate::auth::rate_limit::LoginRateLimiter,
     /// In-memory static-file cache (port of upstream `_STATIC_CACHE`).
     pub static_cache: StaticCache,
 }
 
 impl AppState {
     pub fn new(config: Config, started_at: Instant) -> Self {
+        let state_dir = config.state_dir.clone();
         Self {
             config,
             server_started_at: started_at,
@@ -77,6 +80,7 @@ impl AppState {
             http_client: reqwest::Client::new(),
             session_store: crate::auth::SessionStore::default(),
             challenge_store: crate::auth::webauthn::ChallengeStore::default(),
+            rate_limiter: crate::auth::rate_limit::LoginRateLimiter::new(state_dir),
             static_cache: StaticCache::new(),
         }
     }

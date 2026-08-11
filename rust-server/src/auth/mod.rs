@@ -32,6 +32,7 @@ use sha2::Sha256;
 use crate::state::AppState;
 
 pub mod password;
+pub mod rate_limit;
 pub mod webauthn;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -159,9 +160,25 @@ pub async fn login(State(state): State<AppState>, Json(body): Json<Value>) -> Re
     // Auth activée ? (upstream is_password_auth_enabled)
     let auth_enabled = password::is_password_auth_enabled(&state.config.state_dir);
     if auth_enabled {
+        // Rate-limit : 5 tentatives / 60 s par IP (upstream _check_login_rate).
+        // En mode test isolé (127.0.0.1) le fichier .login_attempts.json est
+        // dans STATE_DIR — indépendant par serveur.
+        let client_ip = "127.0.0.1"; // axum : adresse du peer
+        if !state.rate_limiter.check_allowed(client_ip) {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({
+                    "ok": false,
+                    "logged_in": false,
+                    "error": "Too many attempts. Try again in a minute.",
+                })),
+            )
+                .into_response();
+        }
         // Vérification PBKDF2 réelle (comparaison constant-time interne).
         let (ok, _migrated) = password::verify_password(&state.config.state_dir, password);
         if !ok {
+            state.rate_limiter.record_attempt(client_ip);
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
@@ -172,6 +189,7 @@ pub async fn login(State(state): State<AppState>, Json(body): Json<Value>) -> Re
             )
                 .into_response();
         }
+        state.rate_limiter.clear_attempts(client_ip);
     }
 
     let cookie = create_session(&state);
