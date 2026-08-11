@@ -75,8 +75,11 @@ BENCHMARK = Rust release 0.215 ms /health (R3: 0.216), RSS 1.9 MB, conc 100 PASS
 ## Prochaines actions
 
 ```
-1. Archive sanitizée + SHA256 (R4)
-2. Rapport final R4 + verdict
+1. Archive sanitizée + SHA256 (R4) — DONE
+   /tmp/hermes-webui-rust-r4-archive.tar.gz (22.3 MB)
+   SHA256 = 446e1375fe8257260f42b2b439e8f5ba3e204c1f35191aed55ed7de1e40d7763
+   Sanitize : git archive HEAD, aucun secret réel (exemples doc only)
+2. Rapport final R4 + verdict — DONE (docs/rust-port/r4-final-report.md)
 3. Décision Ed : push des commits R3+R4 (GO explicite requis)
 ```
 
