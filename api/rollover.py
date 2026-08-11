@@ -271,11 +271,20 @@ def perform_rollover(session_id: str, summary: str) -> dict:
     }
     cont.messages = [summary_msg]
 
-    # 4) Persist continuation
+    # 4) Persist continuation. The SESSIONS dict update must stay atomic
+    # under LOCK, but the actual disk save must NOT run inside `with LOCK`:
+    # save() -> _write_session_index() re-acquires the same non-reentrant
+    # threading.Lock, which self-deadlocks the rollover thread permanently
+    # (observed 2026-08-11: session 9d3e419bbabf at 117 MiB — the rollover
+    # created the continuation, then blocked forever in save() holding LOCK,
+    # freezing every /api/* request that touches get_session/all_sessions).
+    # The dict insertion and the disk write are both ordered by the same
+    # thread here, so no other thread can observe the session between the
+    # two steps.
     with LOCK:
         SESSIONS[cont.session_id] = cont
         SESSIONS.move_to_end(cont.session_id)
-        cont.save()
+    cont.save()
 
     # 5) Mark the source archived only after the continuation is durable.
     try:
