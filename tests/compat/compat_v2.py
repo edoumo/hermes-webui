@@ -906,68 +906,74 @@ def sc_bridge_health(ctx):
 # Scénarios — WORKSPACE (lecture seule)
 # ──────────────────────────────────────────────────────────────────────
 def sc_workspace_list(ctx):
-    # DELTA STRUCTUREL DOCUMENTÉ (r2-workspace-port.md) : le port Rust expose
-    # /api/workspace/list|read|metadata alors qu'upstream expose /api/list et
-    # /api/file (chemins différents). Le frontend upstream n'appelle PAS ces
-    # routes du port. Scénario = qualification du CONTRAT DU PORT (pas de
-    # comparaison cross-serveur possible sur des routes qui n'existent pas
-    # des deux côtés — on ne compare pas 404 vs 200, on qualifie le port).
+    # R4 : /api/list exposé sur les deux serveurs (contrat upstream).
+    # Le port isole sur workspace_root() ; upstream résout via session_id.
+    # On compare le listing cross-serveur (sous-ensemble normalisé).
     a = []
-    rr = ctx.rs.request("GET", "/api/workspace/list?path=.")
-    a.append(ok("workspace list rust 200", rr.status == 200, f"got {rr.status} {rr.text(200)}"))
-    rj = rr.json() or {}
+    # session_id requis par upstream (/api/file) — le port Rust le tolère.
+    rp = ctx.py.request("GET", "/api/list?path=.&session_id=compatfixture01")
+    rr = ctx.rs.request("GET", "/api/list?path=.&session_id=compatfixture01")
+    a.append(ok("list python 200", rp.status == 200, f"got {rp.status} {rp.text(200)}"))
+    a.append(ok("list rust 200", rr.status == 200, f"got {rr.status} {rr.text(200)}"))
+    pj, rj = rp.json() or {}, rr.json() or {}
+    pnames = {e.get("name") for e in pj.get("entries", [])}
     rnames = {e.get("name") for e in rj.get("entries", [])}
+    a.append(ok("workspace_sample.txt listé (python)", "workspace_sample.txt" in pnames, str(pnames)))
     a.append(ok("workspace_sample.txt listé (rust)", "workspace_sample.txt" in rnames, str(rnames)))
-    a.append(ok("workspace path normalisé (rust)", rj.get("path") in (".", ""), json.dumps(rj)[:250]))
-    ctx.doc("delta structurel R2 : routes /api/workspace/* propres au port "
-            "(upstream: /api/list, /api/file) — scénario qualifie le contrat du port")
+    a.append(ok("mêmes noms d'entrées", pnames == rnames, f"py={sorted(pnames)} rust={sorted(rnames)}"))
+    ctx.doc("R4 : /api/list cross-serveur — mêmes entrées (fixtures isolées)")
     return a
 
 
 def sc_workspace_read(ctx):
-    # Même delta structurel R2 documenté — qualification du contrat du port.
+    # R4 : /api/file exposé sur les deux serveurs (contrat upstream).
     a = []
-    rr = ctx.rs.request("GET", "/api/workspace/read?path=workspace_sample.txt")
-    a.append(ok("workspace read rust 200", rr.status == 200, f"got {rr.status} {rr.text(200)}"))
-    rj = rr.json() or {}
-    a.append(ok("contenu == fixture", (rj.get("content") or "").strip().startswith("# Fixture workspace"),
-                repr(rj.get("content"))[:120]))
-    # size = taille DISQUE du fichier (232 octets), pas la longueur du JSON
-    # décodé (les accents sont multi-octets en UTF-8) — écarts légitimes.
-    a.append(ok("size == taille disque (pas longueur JSON)",
-                isinstance(rj.get("size"), int) and rj.get("size") > 0,
-                json.dumps(rj)[:200]))
-    ctx.doc("size renvoyé = octets disque du fichier ; la longueur du contenu "
-            "décodé diffère (multi-octets UTF-8) — pas un delta fonctionnel")
-    ctx.doc("delta structurel R2 : /api/workspace/read propre au port "
-            "(upstream: /api/file?session_id=...) — scénario qualifie le contrat du port")
+    # session_id requis par upstream (/api/file) — le port Rust le tolère.
+    rp = ctx.py.request("GET", "/api/file?path=workspace_sample.txt&session_id=compatfixture01")
+    rr = ctx.rs.request("GET", "/api/file?path=workspace_sample.txt&session_id=compatfixture01")
+    a.append(ok("file python 200", rp.status == 200, f"got {rp.status} {rp.text(200)}"))
+    a.append(ok("file rust 200", rr.status == 200, f"got {rr.status} {rr.text(200)}"))
+    pj, rj = rp.json() or {}, rr.json() or {}
+    a.append(ok("contenu identique cross-serveur",
+                (pj.get("content") or "").strip() == (rj.get("content") or "").strip(),
+                f"py={repr(pj.get('content'))[:80]} rust={repr(rj.get('content'))[:80]}"))
+    # size = taille disque (les accents UTF-8 multi-octets différencient du len(content)).
+    a.append(ok("size identique (octets disque)", pj.get("size") == rj.get("size"),
+                f"py={pj.get('size')} rust={rj.get('size')}"))
+    a.append(ok("path identique", pj.get("path") == rj.get("path"), f"py={pj.get('path')} rust={rj.get('path')}"))
+    ctx.doc("R4 : /api/file cross-serveur — contenu, size, path identiques")
     return a
 
 
 def sc_workspace_metadata(ctx):
-    # Même delta structurel R2 documenté — qualification du contrat du port.
+    # R4 : /api/list renvoie les entrées (métadonnées) ; on compare les types.
     a = []
-    rr = ctx.rs.request("GET", "/api/workspace/metadata?path=workspace_sample.txt")
-    a.append(ok("workspace metadata rust 200", rr.status == 200, f"got {rr.status} {rr.text(200)}"))
-    rj = rr.json() or {}
-    a.append(ok("metadata name", rj.get("name") == "workspace_sample.txt", json.dumps(rj)[:200]))
-    a.append(ok("metadata type file", rj.get("type") == "file", json.dumps(rj)[:200]))
-    ctx.doc("delta structurel R2 : /api/workspace/metadata propre au port "
-            "(upstream: /api/list, /api/file) — scénario qualifie le contrat du port")
+    rp = ctx.py.request("GET", "/api/list?path=.&session_id=compatfixture01")
+    rr = ctx.rs.request("GET", "/api/list?path=.&session_id=compatfixture01")
+    pj, rj = rp.json() or {}, rr.json() or {}
+    def type_map(entries):
+        return {e.get("name"): e.get("type") for e in entries}
+    ptypes, rtypes = type_map(pj.get("entries", [])), type_map(rj.get("entries", []))
+    a.append(ok("types d'entrées identiques", ptypes == rtypes, f"py={ptypes} rust={rtypes}"))
+    a.append(ok("workspace_sample.txt type file (rust)", rtypes.get("workspace_sample.txt") == "file",
+                str(rtypes)))
+    ctx.doc("R4 : /api/list — types d'entrées identiques cross-serveur")
     return a
 
 
 def sc_workspace_traversal(ctx):
-    # DELTA STRUCTUREL R2 (même note que workspace/list) : routes /api/workspace/*
-    # propres au port. On qualifie le REJET côté Rust (le port refuse les
-    # traversals — sécurité) ; côté Python ces routes n'existent pas.
+    # R4 : le port expose /api/list + /api/file — la sécurité traversal est
+    # testée cross-serveur via les routes upstream (mêmes refus 400/403/404).
     a = []
-    rr = ctx.rs.request("GET", "/api/workspace/read?path=../../etc/passwd")
-    a.append(ok("traversal read rust refusé", rr.status in (400, 403, 404), f"got {rr.status} {rr.text(120)}"))
-    rr2 = ctx.rs.request("GET", "/api/workspace/list?path=..%2F..%2Fetc")
+    rp = ctx.py.request("GET", "/api/file?path=../../etc/passwd")
+    rr = ctx.rs.request("GET", "/api/file?path=../../etc/passwd")
+    a.append(ok("traversal file python refusé", rp.status in (400, 403, 404), f"got {rp.status} {rp.text(120)}"))
+    a.append(ok("traversal file rust refusé", rr.status in (400, 403, 404), f"got {rr.status} {rr.text(120)}"))
+    rp2 = ctx.py.request("GET", "/api/list?path=..%2F..%2Fetc")
+    rr2 = ctx.rs.request("GET", "/api/list?path=..%2F..%2Fetc")
+    a.append(ok("traversal list python refusé", rp2.status in (400, 403, 404), f"got {rp2.status}"))
     a.append(ok("traversal list rust refusé", rr2.status in (400, 403, 404), f"got {rr2.status}"))
-    ctx.doc("delta structurel R2 : traversal qualifié sur le port uniquement "
-            "(routes /api/workspace/* propres au port)")
+    ctx.doc("R4 : traversal refusé cross-serveur sur /api/file + /api/list")
     return a
 
 

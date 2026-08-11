@@ -44,8 +44,17 @@ print("pbkdf2 salt commun écrit (32 octets) dans les deux STATE_DIR")
 EOF
 
 echo "== build rust (si besoin) =="
+# Le rate-limit login (R4) exige le binaire RELEASE : en debug, PBKDF2 600k
+# prend ~15s/login → 6 logins dépassent la fenêtre de 60s et les premières
+# tentatives expirent avant le 6e (pas de 429). En release (~0.8s/login) les
+# 6 logins tiennent dans la fenêtre et le 429 au 6e est déclenché.
+RS_BIN="$REPO/rust-server/target/release/hermes-webui-rust"
 if [ "$SKIP_BUILD" -eq 0 ]; then
-  (cd "$REPO/rust-server" && cargo build 2>&1 | tail -3) || exit 1
+  (cd "$REPO/rust-server" && CARGO_PROFILE_RELEASE_LTO=thin cargo build --release 2>&1 | tail -3) || exit 1
+fi
+if [ ! -x "$RS_BIN" ]; then
+  echo "binaire release manquant: $RS_BIN" >&2
+  exit 1
 fi
 
 echo "== start bridge mock (8794) =="
@@ -80,7 +89,7 @@ echo "== start rust port (8792) =="
   HERMES_WEBUI_BRIDGE_URL="$BRIDGE_URL" \
   HERMES_WEBUI_WORKSPACE_ROOT="$WS_RS" \
   HERMES_WEBUI_DEFAULT_WORKSPACE="$WS_RS" \
-  ./target/debug/hermes-webui-rust --host 127.0.0.1 --port 8792 \
+  ./target/release/hermes-webui-rust --host 127.0.0.1 --port 8792 \
     --repo-dir .. --state-dir "$RS_STATE" >/tmp/hwui-rust.log 2>&1 &
 )
 sleep 1

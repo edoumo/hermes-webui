@@ -47,6 +47,7 @@ const MAX_LIST_ENTRIES: usize = 200;
 #[derive(Debug, Deserialize)]
 pub struct PathQuery {
     pub path: Option<String>,
+    pub session_id: Option<String>,
 }
 
 /// Normalize a user-supplied relative path to posix form and reject any
@@ -402,4 +403,10 @@ pub fn router() -> axum::Router<crate::state::AppState> {
         .route("/api/workspace/read", axum::routing::get(read))
         .route("/api/workspace/metadata", axum::routing::get(metadata))
         .route("/api/workspace/download", axum::routing::get(download))
+        // R4 : routes upstream exposées pour la parité (contrat /api/list +
+        // /api/file). Le `session_id` est toléré mais non requis : le port
+        // isole sur workspace_root() (sandbox), upstream résout le workspace
+        // depuis la session. La réponse porte le même shape.
+        .route("/api/list", axum::routing::get(list))
+        .route("/api/file", axum::routing::get(read))
 }
