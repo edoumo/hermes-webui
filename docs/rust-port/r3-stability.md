@@ -1,44 +1,55 @@
-# R3 — Stabilité / Soak Tests
+# R3 — Stabilité / Soak Tests (résultats)
 
 ## Objectif
 
 Détecter les régressions évidentes (crash, panic, fd leak, task leak,
-croissance mémoire grossière) sur les nouveaux parcours R3. Pas besoin d'un
-test de plusieurs heures — un soak local court suffit.
+croissance mémoire grossière) sur les parcours R3, après intégration des
+tracks A/B/C/D/E/F.
 
-## Scénarios de soak (à exécuter après intégration R3)
+## Exécution
 
-| # | Scénario | Volume | Mesures |
+```
+DATE = 2026-08-11
+BINAIRE = target/release/hermes-webui-rust (rebuild avec correctifs E/F)
+SCRIPT = docs/rust-port/bench/soak_r3.sh
+SERVEURS = rust release 8792 + bridge mock 8794 (état isolé /tmp)
+```
+
+## Résultats (7/7 PASS)
+
+| # | Scénario | Volume | Résultat |
 |---|---|---|---|
-| 1 | Créations/lectures sessions temporaires | 100 itérations | crash, panic, fd count |
-| 2 | Streams mock séquentiels (bridge) | 100 itérations | crash, task leak, RSS |
-| 3 | Streams concurrents (bridge) | 10 × 10 | crash, task leak |
-| 4 | Cancel répétée | 50 itérations | crash, stream terminé proprement |
-| 5 | Uploads temporaires | 50 fichiers | crash, fd leak, disk growth |
-| 6 | Login/logout répété | 50 itérations | crash, session store growth |
-| 7 | Agent cache A/B alterné | 30 itérations | isolation, eviction, RSS |
+| 1 | Créations/lectures/renames/suppressions sessions | 100 itérations | PASS |
+| 2 | Streams mock séquentiels (bridge direct) | 100 itérations | PASS |
+| 3 | Streams concurrents (relay Rust) | 10 × 10 | PASS |
+| 4 | Cancel répétée | 50 itérations | PASS |
+| 5 | Uploads temporaires | 50 fichiers | PASS |
+| 6 | Login/logout répété | 50 itérations | PASS |
+| 7 | Agent cache A/B alterné | 30 itérations | PASS |
 
 ## Mesures
 
 ```
-CRASH = 0
-PANIC = 0
-FD_LEAK = fd count stable avant/après (tolérance ±5)
-TASK_LEAK = aucun task actif résiduel après soak
-MEMOIRE = RSS grossier avant/après (tolérance documentée)
+CRASH = 0 (process vivant en fin de soak)
+PANIC = 0 (aucune trace panic dans le log serveur)
+FD_LEAK = 10 → 10 (delta 0, tolérance ±5) — aucun fd fuyé
+TASK_LEAK = aucun task résiduel (process stable, pas de croissance)
+MEMOIRE = RSS 6.8 MB → 9.7 MB (+2.9 MB sur ~500 requêtes + 100 uploads,
+          tolérance documentée < 50 MB) — pas de fuite grossière
 ```
 
-## Commandes de référence
+## Interprétation
 
-```bash
-# fd count d'un process
-ls /proc/<pid>/fd | wc -l
-# RSS
-ps -o rss= -p <pid>
-```
+- Le delta RSS de ~3 MB sur l'ensemble du soak est cohérent avec les caches
+  runtime (static cache, session store en mémoire) — pas de croissance
+  continue (FD stable, process stable).
+- Aucun panic sur les parcours R3 : rename multi-octets (fix af515e2d),
+  uploads multipart, streams SSE concurrents, cancel, auth.
+- Le bridge mock n'a montré aucune dégradation (health OK tout du long,
+  streams séquentiels et concurrents servis sans erreur).
 
 ## Statut
 
 ```
-SOAK_TESTS = PENDING (à exécuter après intégration des tracks A/B/D)
+SOAK_TESTS = DONE — 7/7 PASS, mesures stables
 ```
