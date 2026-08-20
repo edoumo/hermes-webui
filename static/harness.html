@@ -9,6 +9,13 @@
 <script>
 window.__HERMES_HARNESS__={csrfToken:""};
 (function(){
+  document.addEventListener('click',function(event){
+    var button=event.target.closest&&event.target.closest('[data-dialog-close]');
+    if(!button)return;
+    event.preventDefault();
+    var dialog=button.closest('dialog');
+    if(dialog)dialog.close();
+  },true);
   function loadClient(){
     var s=document.createElement('script');
     s.src='/harness.js';
@@ -136,22 +143,22 @@ window.__HERMES_HARNESS__={csrfToken:""};
 
 <dialog id="workerDialog">
   <form method="dialog" id="workerForm">
-    <div class="dialog-head"><h2>Create durable worker</h2><button value="cancel" class="icon-btn">×</button></div>
+    <div class="dialog-head"><h2>Create durable worker</h2><button type="button" data-dialog-close class="icon-btn">×</button></div>
     <label>Label<input name="label" maxlength="160" required placeholder="research-worker"></label>
     <label>Role<select name="role"><option value="leaf">Leaf</option><option value="orchestrator">Orchestrator</option></select></label>
     <label>Model<input name="model" maxlength="512" placeholder="deepseek-v4-flash:0731 (optional)"></label>
     <label>Toolsets<input name="toolsets" placeholder="terminal, web (optional)"></label>
-    <div class="dialog-actions"><button value="cancel" class="ghost">Cancel</button><button value="default" class="primary" id="createWorkerSubmit">Create</button></div>
+    <div class="dialog-actions"><button type="button" data-dialog-close class="ghost">Cancel</button><button type="submit" class="primary" id="createWorkerSubmit">Create</button></div>
   </form>
 </dialog>
 
 <dialog id="taskDialog">
   <form method="dialog" id="taskForm">
-    <div class="dialog-head"><h2>Create task</h2><button value="cancel" class="icon-btn">×</button></div>
+    <div class="dialog-head"><h2>Create task</h2><button type="button" data-dialog-close class="icon-btn">×</button></div>
     <label>Subject<input name="subject" maxlength="300" required></label>
     <label>Description<textarea name="description" rows="4" maxlength="16000"></textarea></label>
     <label>Assign worker<select name="worker_id" id="taskWorkerSelect"><option value="">Unassigned</option></select></label>
-    <div class="dialog-actions"><button value="cancel" class="ghost">Cancel</button><button value="default" class="primary" id="createTaskSubmit">Create</button></div>
+    <div class="dialog-actions"><button type="button" data-dialog-close class="ghost">Cancel</button><button type="submit" class="primary" id="createTaskSubmit">Create</button></div>
   </form>
 </dialog>
 
