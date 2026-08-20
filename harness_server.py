@@ -2,29 +2,41 @@
 """Experimental standalone entry point for Hermes Harness UI.
 
 The server reuses Hermes WebUI authentication and HTTP hardening but has its
-own localhost listener. It does not instantiate Hermes Agent: all worker and
-session operations are relayed to the canonical Hermes API by api.harness_ui.
+own localhost listener and its own WebUI auth state. It does not instantiate
+Hermes Agent: all worker and session operations are relayed to the canonical
+Hermes API by api.harness_ui.
 """
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import signal
 import threading
 import time
 import traceback
 from urllib.parse import urlparse
 
-from api.auth import (
+# Two WebUI processes on the same hostname must not share their auth cookie or
+# concurrently rewrite the same .sessions.json file. Configure the Harness
+# process before importing any api.* module so api.config/api.auth resolve a
+# dedicated state directory and cookie namespace.
+_harness_state = str(os.environ.get("HERMES_HARNESS_STATE_DIR", "")).strip()
+if not _harness_state:
+    _harness_state = str(Path.home() / ".hermes" / "webui-harness")
+os.environ["HERMES_WEBUI_STATE_DIR"] = _harness_state
+os.environ.setdefault("HERMES_WEBUI_COOKIE_NAME", "hermes_harness_session")
+
+from api.auth import (  # noqa: E402
     check_auth,
     csrf_token_for_session,
     parse_cookie,
     reset_trusted_auth_request_state,
 )
-from api.harness_ui import handle_harness_request, harness_enabled, serve_harness_asset
-from api.helpers import _CLIENT_DISCONNECT_ERRORS, get_profile_cookie, j
-from api.profiles import clear_request_profile, set_request_profile
-from api.routes import _check_csrf, _csrf_rejection_error
-from server import Handler, QuietHTTPServer, _ignore_sigpipe
+from api.harness_ui import handle_harness_request, harness_enabled, serve_harness_asset  # noqa: E402
+from api.helpers import _CLIENT_DISCONNECT_ERRORS, get_profile_cookie, j  # noqa: E402
+from api.profiles import clear_request_profile, set_request_profile  # noqa: E402
+from api.routes import _check_csrf, _csrf_rejection_error  # noqa: E402
+from server import Handler, QuietHTTPServer, _ignore_sigpipe  # noqa: E402
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8790
@@ -150,6 +162,7 @@ def main() -> None:
 
     print(f"  Hermes Harness UI listening on http://{host}:{port}/harness", flush=True)
     print("  Backend: canonical Hermes API (server-side authenticated BFF)", flush=True)
+    print(f"  Harness auth state: {_harness_state}", flush=True)
     try:
         httpd.serve_forever()
     finally:
