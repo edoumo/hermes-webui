@@ -6,8 +6,24 @@
 <title>Hermes Harness UI</title>
 <meta name="color-scheme" content="dark">
 <link rel="stylesheet" href="/harness.css">
-<script>window.__HERMES_HARNESS__={csrfToken:""};</script>
-<script src="/harness.js" defer></script>
+<script>
+window.__HERMES_HARNESS__={csrfToken:""};
+(function(){
+  function loadClient(){
+    var s=document.createElement('script');
+    s.src='/harness.js';
+    s.onload=function(){
+      if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+    };
+    document.head.appendChild(s);
+  }
+  fetch('/api/harness/csrf',{credentials:'include',headers:{Accept:'application/json'}})
+    .then(function(r){return r.ok?r.json():{};})
+    .then(function(v){window.__HERMES_HARNESS__.csrfToken=(v&&v.csrfToken)||'';})
+    .catch(function(){})
+    .finally(loadClient);
+})();
+</script>
 </head>
 <body>
 <div class="app-shell">
