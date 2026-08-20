@@ -2,7 +2,7 @@
 """Experimental standalone entry point for Hermes Harness UI.
 
 The server reuses Hermes WebUI authentication and HTTP hardening but has its
-own localhost listener.  It does not instantiate Hermes Agent: all worker and
+own localhost listener. It does not instantiate Hermes Agent: all worker and
 session operations are relayed to the canonical Hermes API by api.harness_ui.
 """
 from __future__ import annotations
@@ -14,7 +14,12 @@ import time
 import traceback
 from urllib.parse import urlparse
 
-from api.auth import check_auth, reset_trusted_auth_request_state
+from api.auth import (
+    check_auth,
+    csrf_token_for_session,
+    parse_cookie,
+    reset_trusted_auth_request_state,
+)
 from api.harness_ui import handle_harness_request, harness_enabled, serve_harness_asset
 from api.helpers import _CLIENT_DISCONNECT_ERRORS, get_profile_cookie, j
 from api.profiles import clear_request_profile, set_request_profile
@@ -51,6 +56,10 @@ class HarnessHandler(Handler):
                 return
             if not harness_enabled():
                 return j(self, {"error": "Harness UI is disabled"}, status=404)
+            if parsed.path == "/api/harness/csrf":
+                cookie = parse_cookie(self)
+                token = csrf_token_for_session(cookie) if cookie else ""
+                return j(self, {"csrfToken": token or ""})
             if serve_harness_asset(self, parsed.path):
                 return
             if handle_harness_request(self, parsed, method="GET"):
