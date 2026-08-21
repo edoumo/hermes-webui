@@ -37,6 +37,18 @@ _H4_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ),
 )
 
+_H3_BOOT = """s.onload=function(){
+      if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+    };"""
+_H4_BOOT = """s.onload=function(){
+      var h4=document.createElement('script');
+      h4.src='/harness-operations.js';
+      h4.onload=function(){
+        if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+      };
+      document.head.appendChild(h4);
+    };"""
+
 
 def resolve_upstream(method: str, browser_path: str) -> Optional[str]:
     """Resolve H4 routes first, then preserve the exact H3 allowlist."""
@@ -78,8 +90,29 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
     return foundation.handle_harness_request(handler, parsed, method=method)
 
 
+def _serve_h4_html(handler) -> bool:
+    target = Path(__file__).resolve().parent.parent / "static" / "harness.html"
+    if not target.is_file():
+        j(handler, {"error": "Harness asset missing"}, status=500)
+        return True
+    html = target.read_text(encoding="utf-8")
+    if _H3_BOOT not in html:
+        j(handler, {"error": "Harness H3 bootstrap contract changed"}, status=500)
+        return True
+    data = html.replace(_H3_BOOT, _H4_BOOT, 1).encode("utf-8")
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/html; charset=utf-8")
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+    return True
+
+
 def serve_harness_asset(handler, path: str) -> bool:
-    """Serve the H4 browser layer or delegate the qualified H3 assets."""
+    """Serve H4 shell/asset or delegate unchanged H3 static assets."""
+    if path in {"/harness", "/harness/"}:
+        return _serve_h4_html(handler)
     if path != "/harness-operations.js":
         return foundation.serve_harness_asset(handler, path)
     target = Path(__file__).resolve().parent.parent / "static" / "harness-operations.js"
