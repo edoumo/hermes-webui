@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import api.harness_ui as harness
-from harness_server import _host_port
+from api.harness_ui_bind import resolve_harness_bind
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -145,18 +145,17 @@ def test_standalone_server_preserves_auth_csrf_and_guards_remote_bind():
     assert "csrf_token_for_session" in source
     assert "HERMES_HARNESS_STATE_DIR" in source
     assert 'HERMES_WEBUI_COOKIE_NAME", "hermes_harness_session"' in source
-    assert 'HERMES_HARNESS_ALLOW_REMOTE' in source
-    assert 'HERMES_WEBUI_PASSWORD' in source
+    assert "resolve_harness_bind" in source
 
-    assert _host_port({}) == ("127.0.0.1", 8790)
+    assert resolve_harness_bind({}) == ("127.0.0.1", 8790)
     with pytest.raises(RuntimeError, match="HERMES_HARNESS_ALLOW_REMOTE"):
-        _host_port({"HERMES_HARNESS_HOST": "192.168.1.187"})
+        resolve_harness_bind({"HERMES_HARNESS_HOST": "192.168.1.187"})
     with pytest.raises(RuntimeError, match="HERMES_WEBUI_PASSWORD"):
-        _host_port({
+        resolve_harness_bind({
             "HERMES_HARNESS_HOST": "192.168.1.187",
             "HERMES_HARNESS_ALLOW_REMOTE": "1",
         })
-    assert _host_port({
+    assert resolve_harness_bind({
         "HERMES_HARNESS_HOST": "192.168.1.187",
         "HERMES_HARNESS_ALLOW_REMOTE": "1",
         "HERMES_WEBUI_PASSWORD": "test-only-password",
