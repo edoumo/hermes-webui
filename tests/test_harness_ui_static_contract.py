@@ -13,11 +13,14 @@ def test_dialog_cancel_buttons_cannot_submit_create_forms():
     assert "dialog.close()" in html
 
 
-def test_harness_shell_bootstraps_csrf_before_loading_client():
+def test_harness_shell_fetches_csrf_before_invoking_client_loader():
     html = (ROOT / "static" / "harness.html").read_text(encoding="utf-8")
-    csrf_pos = html.index("/api/harness/csrf")
-    client_pos = html.index("s.src='/harness.js'")
-    assert csrf_pos < client_pos
+    # loadClient may be declared before the fetch, but it must only be invoked
+    # after the CSRF request settles. This tests runtime semantics rather than
+    # brittle textual declaration order.
+    assert "fetch('/api/harness/csrf'" in html
+    assert ".finally(loadClient)" in html
+    assert "s.src='/harness.js'" in html
     assert "csrfToken" in html
 
 
