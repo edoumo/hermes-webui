@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import api.harness_ui as harness
+from harness_server import _host_port
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,36 +112,56 @@ def test_query_and_request_body_are_bounded():
 
 
 def test_static_client_contains_no_gateway_bearer_secret_surface():
-    html = (ROOT / "static" / "harness.html").read_text(encoding="utf-8")
-    js = (ROOT / "static" / "harness.js").read_text(encoding="utf-8")
-    combined = html + "\n" + js
+    assets = [
+        ROOT / "static" / "harness.html",
+        ROOT / "static" / "harness.js",
+        ROOT / "static" / "harness-preferences.js",
+    ]
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in assets)
     assert "HERMES_WEBUI_GATEWAY_API_KEY" not in combined
     assert "Authorization" not in combined
     assert "Bearer " not in combined
-    assert "/api/harness/csrf" in html
-    assert "X-Hermes-CSRF-Token" in js
+    assert "/api/harness/csrf" in combined
+    assert "X-Hermes-CSRF-Token" in combined
 
 
 def test_browser_projection_is_explicitly_bounded_and_event_driven():
     js = (ROOT / "static" / "harness.js").read_text(encoding="utf-8")
+    prefs = (ROOT / "static" / "harness-preferences.js").read_text(encoding="utf-8")
     assert "workers?limit=100" in js
     assert "worker-tasks?limit=100" in js
     assert "messages?limit=50" in js
     assert "activations?limit=50" in js
     assert "new EventSource" in js
     assert "durable_workers.changed" in js
-    # No transcript cache/localStorage persistence in the foundation client.
     assert "localStorage" not in js
+    assert 'const PREFIX = "hermesHarness.ui."' in prefs
 
 
-def test_standalone_server_preserves_webui_auth_csrf_and_isolates_auth_state():
+def test_standalone_server_preserves_auth_csrf_and_guards_remote_bind():
     source = (ROOT / "harness_server.py").read_text(encoding="utf-8")
     assert "check_auth(self, parsed)" in source
     assert "_check_csrf(self)" in source
     assert "csrf_token_for_session" in source
     assert "HERMES_HARNESS_STATE_DIR" in source
     assert 'HERMES_WEBUI_COOKIE_NAME", "hermes_harness_session"' in source
-    assert "localhost-only" in source
+    assert 'HERMES_HARNESS_ALLOW_REMOTE' in source
+    assert 'HERMES_WEBUI_PASSWORD' in source
+
+    assert _host_port({}) == ("127.0.0.1", 8790)
+    with pytest.raises(RuntimeError, match="HERMES_HARNESS_ALLOW_REMOTE"):
+        _host_port({"HERMES_HARNESS_HOST": "192.168.1.187"})
+    with pytest.raises(RuntimeError, match="HERMES_WEBUI_PASSWORD"):
+        _host_port({
+            "HERMES_HARNESS_HOST": "192.168.1.187",
+            "HERMES_HARNESS_ALLOW_REMOTE": "1",
+        })
+    assert _host_port({
+        "HERMES_HARNESS_HOST": "192.168.1.187",
+        "HERMES_HARNESS_ALLOW_REMOTE": "1",
+        "HERMES_WEBUI_PASSWORD": "test-only-password",
+        "HERMES_HARNESS_PORT": "8794",
+    }) == ("192.168.1.187", 8794)
 
 
 def test_harness_does_not_modify_legacy_server_entrypoint():
