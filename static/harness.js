@@ -8,6 +8,8 @@ const state = {
   workerId: null,
   tasks: [],
   events: null,
+  eventsSessionId: null,
+  eventLastId: null,
   refreshTimer: null,
 };
 
@@ -228,7 +230,10 @@ async function loadSessions({ selectFirst = true } = {}) {
   if (!exists) state.sessionId = selectFirst && state.sessions.length ? state.sessions[0].id : null;
   renderSessions();
   if (state.sessionId) await loadSessionData();
-  else clearWorkerView();
+  else {
+    closeEvents();
+    clearWorkerView();
+  }
 }
 
 async function createSession() {
@@ -256,6 +261,7 @@ async function loadSessionData() {
       api(`/api/harness/sessions/${sid}/workers?limit=100`),
       api(`/api/harness/sessions/${sid}/worker-tasks?limit=100`),
     ]);
+    if (state.sessionId !== sid) return;
     state.workers = Array.isArray(workers.items) ? workers.items.slice(0, 100) : [];
     state.tasks = Array.isArray(tasks.items) ? tasks.items.slice(0, 100) : [];
     if (state.workerId && !state.workers.some((w) => w.worker_id === state.workerId)) state.workerId = null;
@@ -265,6 +271,7 @@ async function loadSessionData() {
     if (state.workerId) await loadWorkerDetail(); else clearWorkerView();
     setConnection("online", "Hermes API connected");
   } catch (error) {
+    if (state.sessionId !== sid) return;
     setConnection("error", "Hermes API unavailable");
     showToast(error.message, true);
   }
@@ -290,6 +297,7 @@ async function loadWorkerDetail() {
       api(`/api/harness/sessions/${sid}/workers/${wid}/messages?limit=50`),
       api(`/api/harness/sessions/${sid}/workers/${wid}/activations?limit=50`),
     ]);
+    if (state.sessionId !== sid || state.workerId !== wid) return;
     const worker = workerPayload.worker || workerPayload;
     $("emptyState").classList.add("hidden");
     $("workerView").classList.remove("hidden");
@@ -300,27 +308,55 @@ async function loadWorkerDetail() {
     [worker.status, worker.role, worker.model, ...(worker.toolsets || [])].filter(Boolean).forEach((value) => chips.append(el("span", "chip", value)));
     renderMessages(Array.isArray(messages.items) ? messages.items.slice(0, 50) : []);
     renderActivations(Array.isArray(activations.items) ? activations.items.slice(0, 50) : []);
-  } catch (error) { showToast(error.message, true); }
+  } catch (error) {
+    if (state.sessionId === sid && state.workerId === wid) showToast(error.message, true);
+  }
+}
+
+function closeEvents() {
+  if (state.events) state.events.close();
+  state.events = null;
+  state.eventsSessionId = null;
+  state.eventLastId = null;
 }
 
 function startEvents() {
-  if (state.events) {
-    state.events.close();
-    state.events = null;
+  if (!state.sessionId) {
+    closeEvents();
+    return;
   }
-  if (!state.sessionId) return;
   const sid = safeId(state.sessionId);
+  if (state.events && state.eventsSessionId === sid) return;
+
+  closeEvents();
   const source = new EventSource(`/api/harness/sessions/${sid}/worker-events`, { withCredentials: true });
   state.events = source;
+  state.eventsSessionId = sid;
   $("eventState").textContent = "events connecting";
-  source.addEventListener("open", () => { $("eventState").textContent = "events live"; });
-  source.addEventListener("durable_workers.changed", () => scheduleRefresh());
-  source.addEventListener("error", () => { $("eventState").textContent = "events reconnecting"; });
+
+  source.addEventListener("open", () => {
+    if (state.events !== source || state.eventsSessionId !== sid) return;
+    $("eventState").textContent = "events live";
+  });
+  source.addEventListener("durable_workers.changed", (event) => {
+    if (state.events !== source || state.eventsSessionId !== sid || state.sessionId !== sid) return;
+    const eventId = String(event.lastEventId || "").trim();
+    if (eventId && eventId === state.eventLastId) return;
+    if (eventId) state.eventLastId = eventId;
+    scheduleRefresh(sid);
+  });
+  source.addEventListener("error", () => {
+    if (state.events !== source || state.eventsSessionId !== sid) return;
+    $("eventState").textContent = "events reconnecting";
+  });
 }
 
-function scheduleRefresh() {
+function scheduleRefresh(sessionId = state.sessionId) {
+  const sid = sessionId ? safeId(sessionId) : null;
   clearTimeout(state.refreshTimer);
-  state.refreshTimer = setTimeout(() => loadSessionData(), 180);
+  state.refreshTimer = setTimeout(() => {
+    if (sid && state.sessionId === sid) loadSessionData();
+  }, 180);
 }
 
 async function queueMessage() {
@@ -401,7 +437,7 @@ function wire() {
   $("runWorkerBtn").addEventListener("click", runWorker);
   $("workerForm").addEventListener("submit", createWorkerFromDialog);
   $("taskForm").addEventListener("submit", createTaskFromDialog);
-  window.addEventListener("beforeunload", () => state.events?.close());
+  window.addEventListener("beforeunload", closeEvents);
 }
 
 async function boot() {
