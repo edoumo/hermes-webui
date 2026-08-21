@@ -18,19 +18,19 @@ def _static(name: str) -> str:
     return (STATIC / name).read_text(encoding="utf-8")
 
 
-def test_uat_has_french_english_language_selector_and_theme_toggle():
+def test_uat_has_extensible_language_selector_and_theme_toggle():
     html = _static("harness.html")
     prefs = _static("harness-preferences.js")
+    locales = _static("harness-locales.js")
     css = _static("harness.css")
 
     assert 'id="localeSelect"' in html
-    assert '<option value="en">EN</option>' in html
-    assert '<option value="fr">FR</option>' in html
+    for code in ("en", "fr", "es", "pt", "de", "it"):
+        assert f"{code}: Object.freeze" in locales
+    assert "HermesHarnessLocales" in locales
+    assert "Object.entries(LOCALES)" in prefs
+    assert "navigator.languages" in prefs
     assert 'id="themeToggle"' in html
-    assert 'fr: {' in prefs
-    assert 'en: {' in prefs
-    assert 'navigator.language' in prefs
-    assert 'startsWith("fr")' in prefs
     assert 'theme === "dark" ? "light" : "dark"' in prefs
     assert ':root[data-theme="light"]' in css
 
@@ -64,15 +64,16 @@ def test_uat_task_graph_single_stage_no_longer_forces_max_content_width():
 
 def test_uat_model_is_discoverable_at_create_and_existing_worker_settings():
     html = _static("harness.html")
-    js = _static("harness.js")
+    polish = _static("harness-polish2.js")
 
-    assert html.count('list="modelOptions"') == 2
-    assert 'id="workerSettingsBtn"' in html
-    assert 'id="workerSettingsModel"' in html
-    assert 'id="modelOptions"' in html
-    assert 'await api("/api/harness/models")' in js
-    assert '/workers/${safeId(worker.worker_id)}/edit`' in js
-    assert 'model: model || null' in js
+    assert 'id="workerModelSelect"' in html
+    assert 'id="workerSettingsModelSelect"' in html
+    assert 'id="workerCustomModelInput"' in html
+    assert 'id="workerSettingsCustomModelInput"' in html
+    assert 'await api("/api/harness/model-options")' in polish
+    assert 'state.h62ModelCatalog' in polish
+    assert 'H62_CUSTOM_MODEL' in polish
+    assert '/workers/${safeId(worker.worker_id)}/edit`' in polish
 
 
 def test_uat_worker_archive_is_backend_reversible_not_hard_delete():
