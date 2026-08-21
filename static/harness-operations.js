@@ -9,20 +9,20 @@ state.h4Activations = [];
 function h4InstallControls() {
   const summary = document.querySelector(".workers-rail .summary-strip");
   if (summary && !$("opsState")) {
-    summary.append(el("span", "", "ops idle"));
+    summary.append(el("span", "", t("opsIdle")));
     summary.lastElementChild.id = "opsState";
   }
 
   const run = $("runWorkerBtn");
   if (run && !$("retryWorkerBtn")) {
-    const retry = el("button", "ghost", "Retry failed");
+    const retry = el("button", "ghost", t("retryFailed"));
     retry.id = "retryWorkerBtn";
     retry.type = "button";
     retry.hidden = true;
     run.before(retry);
   }
   if (run && !$("cancelActivationBtn")) {
-    const cancel = el("button", "ghost", "Cancel activation");
+    const cancel = el("button", "ghost", t("cancelActivation"));
     cancel.id = "cancelActivationBtn";
     cancel.type = "button";
     cancel.hidden = true;
@@ -51,11 +51,11 @@ function h4RenderOperationsSummary() {
   if (!target) return;
   const operations = state.operations;
   if (!state.sessionId) {
-    target.textContent = "ops idle";
+    target.textContent = t("opsIdle");
     return;
   }
   if (!operations) {
-    target.textContent = "ops unavailable";
+    target.textContent = t("opsUnavailable");
     return;
   }
   const active = Number(operations.activations?.STARTING || 0)
@@ -63,7 +63,7 @@ function h4RenderOperationsSummary() {
     + Number(operations.activations?.CANCEL_REQUESTED || 0);
   const failed = Number(operations.workers?.FAILED || 0);
   const cap = Number(operations.configured_max_concurrent_activations || 0);
-  target.textContent = `session active ${active} · failed ${failed} · cap ${cap}`;
+  target.textContent = t("opsSummary", { active, failed, cap });
 }
 
 function h4RenderWorkerControls() {
@@ -80,6 +80,7 @@ function h4RenderWorkerControls() {
     return;
   }
 
+  retry.textContent = t("retryFailed");
   retry.hidden = worker.status !== "FAILED";
   retry.disabled = worker.status !== "FAILED";
 
@@ -92,8 +93,8 @@ function h4RenderWorkerControls() {
   cancel.hidden = !cancelable;
   cancel.disabled = !cancelable || activation?.state === "CANCEL_REQUESTED";
   cancel.textContent = activation?.state === "CANCEL_REQUESTED"
-    ? "Cancellation requested"
-    : "Cancel activation";
+    ? t("cancellationRequested")
+    : t("cancelActivation");
 
   // H3 already relies on backend serialization; H4 makes the operator state
   // explicit so obviously invalid runs are not offered from FAILED/RUNNING.
@@ -132,7 +133,7 @@ async function h4RetryFailedWorker() {
         body: { expected_revision: worker.revision },
       },
     );
-    showToast(`Worker ready to retry (${result.message_id || "message requeued"})`);
+    showToast(t("workerRetryReady", { id: result.message_id || "message requeued" }));
     await loadSessionData();
   } catch (error) {
     showToast(error.message, true);
@@ -147,7 +148,7 @@ async function h4CancelActivation() {
   if (!state.sessionId || !worker || !activation) return;
   if (activation.state !== "RUNNING") return;
   const confirmed = window.confirm(
-    `Cancel activation ${activation.activation_id}? The durable message will only be requeued after the child is confirmed cancelled.`,
+    t("cancelActivationConfirm", { id: activation.activation_id }),
   );
   if (!confirmed) return;
 
@@ -162,8 +163,8 @@ async function h4CancelActivation() {
       },
     );
     showToast(result.status === "CANCEL_REQUESTED"
-      ? "Cancellation requested; waiting for terminal child state"
-      : String(result.status || "Cancellation acknowledged"));
+      ? t("cancellationWaiting")
+      : String(result.status || t("cancellationAcknowledged")));
     scheduleRefresh(state.sessionId);
   } catch (error) {
     showToast(error.message, true);
