@@ -24,7 +24,7 @@ h5ResetTask = async function h5RecoverOrResetTask(task) {
         body: { expected_revision: task.revision },
       },
     );
-    showToast(`Task recovery ready (${result.message_id || "message restored"})`);
+    showToast(t("taskRecoveryReady", { id: result.message_id || "message restored" }));
     await loadSessionData();
   } catch (error) {
     showToast(error.message, true);
@@ -35,11 +35,14 @@ const h5RecoveryFoundationTaskNode = h5TaskNode;
 h5TaskNode = function h5RecoveryTaskNode(task, allTasks) {
   const node = h5RecoveryFoundationTaskNode(task, allTasks);
   if (task.status === "failed") {
-    for (const button of node.querySelectorAll("button")) {
-      if (button.textContent === "Reset to pending") {
-        button.textContent = "Recover task";
-        button.title = "Restore the failed task, its worker and durable message for redispatch";
-      }
+    // Failed task nodes have a single action in the H5 base renderer.  Select
+    // it structurally rather than matching its translated text so recovery is
+    // independent of the active Harness locale.
+    const button = node.querySelector(".h5-task-actions button");
+    if (button) {
+      button.textContent = t("recoverTask");
+      button.title = t("recoverTaskTitle");
+      button.dataset.h5Action = "recover";
     }
   }
   return node;
