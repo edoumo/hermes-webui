@@ -1,4 +1,4 @@
-"""H6 final-contract tests for the complete H3-H5 Harness surface."""
+"""H6/H6.1 final-contract tests for the complete Harness surface."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,12 +10,13 @@ from api import harness_ui_tasks as tasks
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "static"
 
-_BROWSER_ASSETS = (
+_BROWSER_RUNTIME_ASSETS = (
     "harness.js",
     "harness-operations.js",
     "harness-tasks.js",
     "harness-task-recovery.js",
 )
+_BROWSER_ASSETS = ("harness-preferences.js",) + _BROWSER_RUNTIME_ASSETS
 
 
 def _asset_source(name: str) -> str:
@@ -26,9 +27,9 @@ def test_final_harness_has_exactly_one_eventsource_owner():
     sources = {name: _asset_source(name) for name in _BROWSER_ASSETS}
 
     assert sources["harness.js"].count("new EventSource") == 1
-    assert "new EventSource" not in sources["harness-operations.js"]
-    assert "new EventSource" not in sources["harness-tasks.js"]
-    assert "new EventSource" not in sources["harness-task-recovery.js"]
+    for name in _BROWSER_ASSETS:
+        if name != "harness.js":
+            assert "new EventSource" not in sources[name]
 
 
 def test_final_browser_assets_keep_server_side_secret_boundary():
@@ -39,21 +40,43 @@ def test_final_browser_assets_keep_server_side_secret_boundary():
         "Bearer ",
         "API_SERVER_KEY",
         "HERMES_WEBUI_GATEWAY_API_KEY",
+        "durable-workers.db",
     ):
         assert forbidden not in combined
-    assert "localStorage" not in combined
 
 
-def test_final_server_remains_localhost_only_and_serves_all_layers():
+def test_uat_preferences_are_the_only_localstorage_surface_and_are_ui_only():
+    runtime = "\n".join(_asset_source(name) for name in _BROWSER_RUNTIME_ASSETS)
+    preferences = _asset_source("harness-preferences.js")
+
+    assert "localStorage" not in runtime
+    assert "localStorage" in preferences
+    assert 'const PREFIX = "hermesHarness.ui."' in preferences
+    for forbidden in (
+        "messageInput",
+        "messageList",
+        "activationList",
+        "taskList",
+        "csrfToken",
+        "apiKey",
+        "Authorization",
+        "Bearer ",
+    ):
+        assert forbidden not in preferences
+
+
+def test_final_server_defaults_loopback_and_remote_bind_is_guarded():
     server = (ROOT / "harness_server.py").read_text(encoding="utf-8")
 
     assert '_DEFAULT_HOST = "127.0.0.1"' in server
-    assert 'host not in {"127.0.0.1", "::1", "localhost"}' in server
-    assert "Hermes Harness UI foundation is localhost-only" in server
+    assert 'HERMES_HARNESS_ALLOW_REMOTE' in server
+    assert 'HERMES_WEBUI_PASSWORD' in server
+    assert "Non-loopback Harness bind requires" in server
     assert "from api.harness_ui_task_recovery import" in server
 
     for asset in (
         "/harness.js",
+        "/harness-preferences.js",
         "/harness-operations.js",
         "/harness-tasks.js",
         "/harness-task-recovery.js",
@@ -94,9 +117,13 @@ def test_final_script_boot_order_is_h3_h4_h5_recovery_then_boot():
 
 def test_final_h5_bff_surface_adds_only_get_and_post_controls():
     h5_methods = {method for method, _pattern, _template in tasks._H5_ROUTES}
+    h61_methods = {
+        method for method, _pattern, _template in recovery._H61_WORKER_ROUTES
+    }
 
     assert h5_methods <= {"GET", "POST"}
+    assert h61_methods == {"POST"}
     assert recovery._RECOVERY_ROUTE[0] == "POST"
-    assert "DELETE" not in h5_methods
-    assert "PUT" not in h5_methods
-    assert "PATCH" not in h5_methods
+    assert "DELETE" not in h5_methods | h61_methods
+    assert "PUT" not in h5_methods | h61_methods
+    assert "PATCH" not in h5_methods | h61_methods
