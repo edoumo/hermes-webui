@@ -23,6 +23,7 @@ from api.helpers import j
 _HARNESS_PREFIX = "/api/harness"
 _MAX_REQUEST_BYTES = 256 * 1024
 _MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+_MAX_SSE_LINE_BYTES = 64 * 1024
 _NORMAL_TIMEOUT_SECONDS = 30.0
 _SSE_TIMEOUT_SECONDS = 650.0
 _SAFE_ID = r"[A-Za-z0-9._:-]{1,256}"
@@ -330,11 +331,17 @@ def _proxy_sse(handler, parsed, *, upstream_path: str) -> bool:
         handler.send_header("Connection", "close")
         handler.end_headers()
         try:
+            # SSE is line-oriented. HTTPResponse.read(N) may wait for N bytes,
+            # which buffers small event frames and can make EventSource churn.
+            # readline() returns as soon as each protocol line is available, so
+            # every event/keepalive is forwarded immediately to the browser.
             while True:
-                chunk = response.read(4096)
-                if not chunk:
+                line = response.readline(_MAX_SSE_LINE_BYTES + 1)
+                if not line:
                     break
-                handler.wfile.write(chunk)
+                if len(line) > _MAX_SSE_LINE_BYTES and not line.endswith(b"\n"):
+                    break
+                handler.wfile.write(line)
                 handler.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             pass
