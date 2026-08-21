@@ -1,4 +1,4 @@
-"""H6/H6.1/H6.2 final-contract tests for the complete Harness surface."""
+"""H6/H6.1/H6.2/H6.3 final-contract tests for the complete Harness surface."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,6 +16,7 @@ _BROWSER_RUNTIME_ASSETS = (
     "harness-tasks.js",
     "harness-task-recovery.js",
     "harness-polish2.js",
+    "harness-polish3.js",
 )
 _BROWSER_ASSETS = ("harness-locales.js", "harness-preferences.js") + _BROWSER_RUNTIME_ASSETS
 
@@ -87,6 +88,7 @@ def test_final_server_defaults_loopback_and_remote_bind_is_guarded():
         "/harness-tasks.js",
         "/harness-task-recovery.js",
         "/harness-polish2.js",
+        "/harness-polish3.js",
     ):
         assert f'"{asset}"' in server
 
@@ -108,20 +110,22 @@ def test_final_bff_delegation_chain_preserves_h4_operations():
     assert "harness_ui_task_recovery" not in legacy_server
 
 
-def test_final_script_boot_order_is_h3_h4_h5_recovery_h62_then_boot():
+def test_final_script_boot_order_is_h3_h4_h5_recovery_h62_h63_then_boot():
     boot = recovery._H5_RECOVERY_BOOT
 
     h4 = boot.index("h4.src='/harness-operations.js'")
     h5 = boot.index("h5.src='/harness-tasks.js'")
     h5_recovery = boot.index("h5r.src='/harness-task-recovery.js'")
     h62 = boot.index("h62.src='/harness-polish2.js'")
+    h63 = boot.index("h63.src='/harness-polish3.js'")
     dom_boot = boot.index("document.dispatchEvent(new Event('DOMContentLoaded'))")
 
-    assert h4 < h5 < h5_recovery < h62 < dom_boot
+    assert h4 < h5 < h5_recovery < h62 < h63 < dom_boot
     assert boot.count("/harness-operations.js") == 1
     assert boot.count("/harness-tasks.js") == 1
     assert boot.count("/harness-task-recovery.js") == 1
     assert boot.count("/harness-polish2.js") == 1
+    assert boot.count("/harness-polish3.js") == 1
 
 
 def test_final_bff_surface_remains_non_destructive():
