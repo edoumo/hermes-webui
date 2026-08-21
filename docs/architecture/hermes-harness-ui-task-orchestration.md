@@ -1,121 +1,128 @@
-# Hermes Harness UI H5 task orchestration
+# Hermes Harness UI H5 Task Orchestration
 
-Status: `H5_UI_CODE_IN_PROGRESS`
+Status: `H5_TASK_ORCHESTRATION_STATUS=PASS`
 
 Branch: `experimental/hermes-harness-ui-task-orchestration`
 
+Qualified Harness behavior SHA: `97f614f19cb71439028287ed87bc11679ebe76db`
+
 H4 baseline: `601f6049f1d81d2e536e341f2e9fb1e7726ed09d`
 
-Backend H5 branch: `experimental/durable-workers-task-orchestration`
+Qualified backend SHA: `ea254053c82929fc44646b6cb4c8456498d5deb4`
 
 ## Purpose
 
-H5 makes the existing Durable Worker task DAG operational in Harness without moving orchestration state into the browser.
+H5 makes the Durable Worker task DAG operational in Harness while preserving the thin-client architecture:
 
-Layering remains:
+Browser -> Harness BFF -> canonical Hermes API -> Durable Task Orchestration -> qualified Durable Worker lifecycle.
 
-Browser -> Harness BFF -> canonical Hermes API -> Durable Worker task orchestration -> existing H1/H4 lifecycle.
+H3 still owns session state, bounded worker projections, SSE refresh scheduling and the single EventSource per selected session. H4 still owns operator cancel/retry. H5 adds only the task graph, task controls and task-aware recovery.
 
-H3 continues to own:
+## BFF surface
 
-- session state;
-- worker projections;
-- the single EventSource per selected session;
-- SSE refresh scheduling.
+H5 exposes same-origin allowlisted routes for:
 
-H4 continues to own:
-
-- operational summary;
-- worker cancel;
-- worker retry.
-
-H5 owns only:
-
-- DAG graph projection;
-- pending task edit/reassignment;
+- session task graph;
+- task edit/reassignment;
 - dependency add/remove;
-- READY task dispatch;
-- task-focused rendering.
+- task dispatch;
+- failed-task recovery.
 
-## BFF additions
+POST controls reject query parameters. The Hermes API Bearer remains server-side.
 
-- `GET /api/harness/sessions/{session_id}/worker-task-graph`
-- `POST /api/harness/sessions/{session_id}/worker-tasks/{task_id}/edit`
-- `POST /api/harness/sessions/{session_id}/worker-tasks/{task_id}/dependencies/add`
-- `POST /api/harness/sessions/{session_id}/worker-tasks/{task_id}/dependencies/remove`
-- `POST /api/harness/sessions/{session_id}/worker-tasks/{task_id}/dispatch`
+## Browser layering
 
-POST controls reject query parameters.
+The Harness shell loads the qualified layers in order:
 
-The Hermes API Bearer remains server-side.
+1. `harness.js` (H3/B3);
+2. `harness-operations.js` (H4);
+3. `harness-tasks.js` (H5 DAG/actions);
+4. `harness-task-recovery.js` (H5 recovery extension);
+5. synthetic `DOMContentLoaded` boot.
 
-## Browser load order
-
-The H5 shell loads classic scripts in this order:
-
-1. `harness.js` (qualified H3/B3);
-2. `harness-operations.js` (qualified H4);
-3. `harness-tasks.js` (H5);
-4. synthetic `DOMContentLoaded` boot.
-
-H5 therefore wraps the already-qualified H4 `loadSessionData()` function rather than replacing session/SSE ownership.
+H5 does not create a second EventSource or duplicate H3 session ownership.
 
 ## DAG rendering
 
-No graph framework or build dependency is introduced.
+The graph is session-level and remains visible without selecting a worker.
 
-The browser computes topological levels from the bounded graph projection and renders task nodes in horizontal stages. An SVG overlay draws dependency edges between the rendered nodes.
+The browser renders bounded topological stages and SVG dependency links without introducing a graph framework or build dependency.
 
-The graph is bounded to 100 tasks.
-
-The browser does not infer readiness. It displays the backend-projected `task.ready` value and uses it to gate dispatch controls.
+Readiness is displayed from the backend projection. The browser does not invent READY/BLOCKED state.
 
 ## Task controls
 
-Pending task cards support:
+Pending tasks support:
 
-- assignment/unassignment to an existing session worker;
 - subject/description edit;
+- worker assignment/unassignment/reassignment;
 - dependency add/remove;
-- dispatch when `ready` and the assigned worker is projected `DORMANT`.
+- dispatch when backend `ready=true` and assigned worker is projected DORMANT.
 
-Failed/cancelled cards expose a reset-to-pending action through the existing task status route.
+Failed tasks expose `Recover task`, which invokes the H5 task-aware recovery route rather than generic client-side state manipulation.
 
-Task dispatch sends only `expected_revision`; the backend creates the durable message and activation atomically.
+The browser never sets `in_progress`, `completed`, `failed` or `pending` optimistically. Durable state transitions arrive through canonical API projections and H3 SSE invalidation.
 
-The browser never sets `in_progress`, `completed` or `failed` optimistically. Those states arrive through the canonical API projection and H3 SSE invalidation path.
+## Real qualification
 
-## Security and isolation invariants
+Integrated lab qualification completed with `H5_TASK_ORCHESTRATION_STATUS=PASS`.
+
+The real browser/runtime recipe proved:
+
+- session-scoped DAG and exact dependency edges;
+- CAS-safe edit/reassignment;
+- cycle rejection;
+- READY/BLOCKED enforcement;
+- real DeepSeek task dispatch and completion;
+- automatic dependent unblocking;
+- H4 operator cancel while task remains locked `in_progress` until terminal CANCELLED;
+- same-message/new-activation redispatch after cancellation;
+- fail-closed task failure on system drain;
+- `Recover task` restoration and successful redispatch;
+- crash/restart projection from H1 ABANDONED back to pending task state;
+- worker inbox ordering;
+- shared activation capacity;
+- session isolation and CSRF;
+- one EventSource per session;
+- bounded DOM and no localStorage graph/transcript state;
+- unchanged principal runtime and legacy WebUI.
+
+JavaScript syntax checks passed on all H3/H4/H5 assets.
+
+## Test-hygiene note
+
+The H5 qualification reported one obsolete H4 static test. That test asserted that `harness_server.py` directly imports `api.harness_ui_operations`, which was true in H4 but is intentionally no longer the physical import topology in H5.
+
+H5 imports the final `api.harness_ui_task_recovery` layer, which delegates through the H5 task layer to H4 operations. Runtime import/delegation was validated in the real recipe.
+
+The test has been updated after qualification to assert the preserved delegation contract instead of the obsolete literal import. That post-qualification change is test-only; qualified H5 behavior remains anchored at SHA `97f614f19cb71439028287ed87bc11679ebe76db`.
+
+## Security invariants
 
 H5 browser code contains no:
 
-- `Authorization` header;
-- Bearer value;
+- Authorization header;
+- Bearer credential;
 - API server key;
 - direct SQLite access;
-- lifecycle handle;
+- live lifecycle handle;
 - second EventSource;
-- transcript in localStorage.
+- task graph or transcript storage in localStorage.
 
-Existing Harness auth, cookie isolation and CSRF remain inherited.
+Harness auth, cookie isolation and CSRF remain inherited.
 
-## Tests added
+## Qualification evidence
 
-`tests/test_harness_ui_task_orchestration.py`
+Evidence directory:
 
-It locks:
+`/home/edou/lab/hermes-durable-workers-h5/evidence-h5/`
 
-- exact H5 BFF allowlist;
-- H3 -> H4 -> H5 load order;
-- server isolation from legacy WebUI;
-- bounded graph projection usage;
-- state/revision-driven controls;
-- no Bearer/EventSource/localStorage regression.
+Archive:
 
-## Qualification boundary
+`/home/edou/lab/hermes-durable-workers-h5/evidence-h5/h5-task-orchestration-evidence.tar.gz`
 
-No real H5 runtime/browser recipe has run yet.
+SHA256:
 
-The lab must validate real graph updates, dependency editing, READY gating, real task dispatch, automatic completion/failure/cancel projection, one EventSource ownership, bounded DOM and unchanged H4 controls before H5 is marked PASS.
+`48706e3b31f39f4ae7fca88233ab787f7c1f7659d2b96b89438aef59537f0e43`
 
-No PR, merge or principal runtime mutation is authorized.
+No PR, merge, main/master update or principal runtime deployment is authorized by this qualification.
