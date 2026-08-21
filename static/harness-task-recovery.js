@@ -2,6 +2,17 @@
 
 // H5 recovery loads after harness-tasks.js and before boot. Failed task
 // recovery is task-aware; cancelled task reset keeps the older generic path.
+// The DAG itself is session-level, so move its card out of the worker detail
+// pane without changing the H3/H4 worker transcript/activation layout.
+(function h5PromoteTaskGraphToSessionWorkspace() {
+  const workspace = document.querySelector(".workspace");
+  const card = document.querySelector(".tasks-card");
+  if (workspace && card && card.parentElement?.id === "workerView") {
+    workspace.append(card);
+    card.dataset.h5SessionGraph = "true";
+  }
+})();
+
 const h5FoundationResetTask = h5ResetTask;
 h5ResetTask = async function h5RecoverOrResetTask(task) {
   if (task.status !== "failed") return h5FoundationResetTask(task);
