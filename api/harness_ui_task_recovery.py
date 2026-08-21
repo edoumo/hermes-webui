@@ -1,4 +1,4 @@
-"""H5 recovery plus H6.1 UAT-polish extensions for the Harness BFF."""
+"""H5 recovery plus H6.1/H6.2 human-UAT polish extensions for Harness."""
 from __future__ import annotations
 
 import re
@@ -44,6 +44,12 @@ _H61_WORKER_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ),
 )
 
+# Hermes' stock API already owns the rich provider/model inventory endpoint.
+# H6.2 only exposes it through the same server-side authenticated Harness BFF.
+_H62_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    ("GET", re.compile(r"^/model-options$"), "/api/model/options"),
+)
+
 _H5_RECOVERY_BOOT = """s.onload=function(){
       var h4=document.createElement('script');
       h4.src='/harness-operations.js';
@@ -54,7 +60,12 @@ _H5_RECOVERY_BOOT = """s.onload=function(){
           var h5r=document.createElement('script');
           h5r.src='/harness-task-recovery.js';
           h5r.onload=function(){
-            if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+            var h62=document.createElement('script');
+            h62.src='/harness-polish2.js';
+            h62.onload=function(){
+              if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+            };
+            document.head.appendChild(h62);
           };
           document.head.appendChild(h5r);
         };
@@ -73,7 +84,7 @@ def resolve_upstream(method: str, browser_path: str) -> Optional[str]:
             match = _RECOVERY_ROUTE[1].fullmatch(suffix)
             if match:
                 return _RECOVERY_ROUTE[2].format(**match.groupdict())
-        for route_method, pattern, template in _H61_WORKER_ROUTES:
+        for route_method, pattern, template in _H61_WORKER_ROUTES + _H62_ROUTES:
             if route_method != method:
                 continue
             match = pattern.fullmatch(suffix)
@@ -93,7 +104,7 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
         if parsed.query:
             j(
                 handler,
-                {"error": "Harness operator control routes do not accept query parameters"},
+                {"error": "Harness operator/catalog routes do not accept query parameters"},
                 status=400,
             )
             return True
@@ -143,10 +154,14 @@ def _serve_js_asset(handler, filename: str) -> bool:
 def serve_harness_asset(handler, path: str) -> bool:
     if path in {"/harness", "/harness/"}:
         return _serve_recovery_html(handler)
-    if path == "/harness-task-recovery.js":
-        return _serve_js_asset(handler, "harness-task-recovery.js")
-    if path == "/harness-preferences.js":
-        return _serve_js_asset(handler, "harness-preferences.js")
+    assets = {
+        "/harness-task-recovery.js": "harness-task-recovery.js",
+        "/harness-preferences.js": "harness-preferences.js",
+        "/harness-locales.js": "harness-locales.js",
+        "/harness-polish2.js": "harness-polish2.js",
+    }
+    if path in assets:
+        return _serve_js_asset(handler, assets[path])
     return tasks.serve_harness_asset(handler, path)
 
 
