@@ -1,6 +1,6 @@
 # Hermes Harness UI H4 operational controls
 
-Status: `H4_UI_CODE_IN_PROGRESS`
+Status: `H4_UI_CODE_READY_FOR_INTEGRATED_QUALIFICATION`
 
 Branch: `experimental/hermes-harness-ui-operations`
 
@@ -94,8 +94,8 @@ H4 preserves H3 requirements:
 
 ## Qualification status
 
-No real H4 runtime recipe has run yet.
+The H4 UI/BFF extension, state-gated controls, contract tests and documentation are complete for this first slice and ready for isolated integrated qualification.
 
-The next development gate is repository-level contract testing of both H4 branches. The subsequent infrastructure gate must validate real operator cancellation, retry after real terminal failure, SSE-driven UI transitions and clean coexistence with the principal runtime in an isolated lab.
+No real H4 runtime recipe has run yet. The integrated lab must validate the repository tests, a real operator cancellation of a RUNNING child, retry of a real fail-closed worker, SSE-driven UI transitions, state gating and clean coexistence with the principal runtime before H4 can be marked PASS.
 
 No PR, merge or principal runtime mutation is authorized at this stage.
