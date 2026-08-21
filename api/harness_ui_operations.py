@@ -1,15 +1,17 @@
 """H4 operational-control extension for the qualified Harness H3 BFF.
 
-The H3 BFF remains unchanged.  This module adds only the H4 allowlisted routes
-and delegates every other request, asset and security primitive back to
-``api.harness_ui``.
+The H3 BFF remains unchanged. This module adds only the H4 allowlisted routes
+and one local browser asset, delegating every other request and security
+primitive back to ``api.harness_ui``.
 """
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Optional
 
 from api import harness_ui as foundation
+from api.helpers import j
 
 _SAFE_ID = r"[A-Za-z0-9._:-]{1,256}"
 
@@ -61,7 +63,7 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
         return False
     if upstream != foundation_upstream:
         if parsed.query:
-            foundation.j(
+            j(
                 handler,
                 {"error": "H4 Harness control routes do not accept query parameters"},
                 status=400,
@@ -76,8 +78,25 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
     return foundation.handle_harness_request(handler, parsed, method=method)
 
 
+def serve_harness_asset(handler, path: str) -> bool:
+    """Serve the H4 browser layer or delegate the qualified H3 assets."""
+    if path != "/harness-operations.js":
+        return foundation.serve_harness_asset(handler, path)
+    target = Path(__file__).resolve().parent.parent / "static" / "harness-operations.js"
+    if not target.is_file():
+        j(handler, {"error": "Harness operations asset missing"}, status=500)
+        return True
+    data = target.read_bytes()
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/javascript; charset=utf-8")
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+    return True
+
+
 harness_enabled = foundation.harness_enabled
-serve_harness_asset = foundation.serve_harness_asset
 
 
 __all__ = [
