@@ -1,18 +1,22 @@
 # Hermes Harness UI H6 final consolidation
 
-Status: `H6_UI_CLEAN_CANDIDATE_READY_FOR_QUALIFICATION`
+Status: `H6_UI_FINAL_QUALIFICATION=PASS`
 
 Clean candidate branch: `experimental/hermes-harness-ui-h6-upstream-master`
 
 Upstream base: `nesquena/hermes-webui@cfcc39194a4cfbb6c78fe8114695a70737e17bbf`
 
-Qualified H5 behavior baseline: `97f614f19cb71439028287ed87bc11679ebe76db`
+Behavior-qualified H6 SHA: `9a6ea47e969489149c3964c6de8bdb9923acd3cc`
+
+Paired backend behavior-qualified H6 SHA: `011fe3c2fb20385c97ecad450ded02d0982ae3db`
+
+Backend test-hygiene HEAD: `07dd7bd93411f3486e405b55dda48892395ea637`
 
 ## Purpose
 
-H6 is a consolidation phase, not a new Harness feature. The H5 runtime/UI behavior is already qualified. H6 locks that behavior into a clean, reviewable candidate rebuilt directly on the current upstream WebUI base.
+H6 is a consolidation phase, not a new Harness feature. The H5 runtime/UI behavior was already qualified; H6 proves that behavior on a clean candidate rebuilt directly on the recorded upstream WebUI base.
 
-The clean candidate is additive: it does not overwrite existing upstream production files. Historical qualification-candidate notes are deliberately omitted from the public-facing diff.
+The clean candidate is additive and does not overwrite existing upstream production files. Historical qualification-candidate notes are deliberately omitted from the public-facing diff.
 
 ## Final layering
 
@@ -28,7 +32,7 @@ The standalone server delegates through:
 
 `harness_server.py -> api.harness_ui_task_recovery -> api.harness_ui_tasks -> api.harness_ui_operations -> api.harness_ui`
 
-H6 does not add another BFF layer.
+H6 adds no additional BFF layer.
 
 ## Security boundary
 
@@ -45,27 +49,34 @@ The final Harness contract remains:
 - one EventSource per selected session, owned only by H3;
 - bounded task/message/activation projections.
 
-## H6 changes
+## H6 behavior
 
-No Harness production JavaScript, BFF route, or server behavior is intentionally changed by H6 relative to the H5 implementation. The clean candidate carries the existing H3-H5 Harness runtime, final architecture documentation and consolidated tests onto the current upstream base.
+No Harness production JavaScript, BFF route, or server behavior was intentionally changed by H6 relative to H5. The clean candidate carries the qualified H3-H5 Harness runtime, final architecture documentation and consolidated tests onto the recorded upstream base.
 
-The H6 final-contract coverage verifies the complete surface together, including one browser EventSource owner, no browser secret/header material, no localStorage persistence, localhost listener guards, the full BFF delegation chain, GET/POST-only task controls, and expected Harness assets.
+The final H6 campaign proved:
+
+- WebUI Python compilation PASS;
+- Harness suite `36/36 PASS`;
+- JavaScript syntax checks PASS;
+- real Durable Worker dispatch through Harness PASS;
+- task DAG READY/BLOCKED projection and backend-driven unblock PASS;
+- operator cancel and same-message/new-activation redispatch PASS;
+- task fail-closed recovery and redispatch PASS;
+- crash/restart reconciliation PASS;
+- authentication, CSRF and cross-session isolation PASS;
+- browser secret boundary PASS;
+- exactly one EventSource owner per session, no reconnect storm and no SSE 429 PASS;
+- bounded DOM after repeated transitions PASS;
+- principal WebUI/runtime/configuration untouched.
+
+The paired backend real-runtime evidence archive SHA-256 is:
+
+`e7ac0b0d89e13055b94046d7aefed9123e1b40a9454bdd8a56300120a7755d91`
 
 See [AI-assisted development](ai-assisted-development.md) for the scoped `🤖 AI-assisted development` transparency note. It applies to this Harness contribution, not unrelated upstream Hermes WebUI code.
 
-## Qualification boundary
+## User acceptance gate
 
-The clean candidate is ready for isolated H6 qualification, not yet declared PASS. The final lab must pair it with the clean upstream-based Hermes Agent H6 candidate and perform focused integration smokes for:
+Technical qualification is complete, but upstream PR preparation is deliberately gated on a hands-on maintainer acceptance pass. The maintainer should use the Harness as an operator rather than merely replaying the automated test matrix, and report any usability, workflow, terminology or visual issues before PR preparation.
 
-- login/auth/CSRF;
-- session selection and worker projections;
-- normal Durable Worker execution;
-- cancel/retry/recovery;
-- task DAG dispatch/recovery;
-- one EventSource only with no reconnect storm or SSE 429;
-- bounded DOM/state and no browser secrets;
-- principal WebUI/runtime unchanged.
-
-A complete replay of every H3-H5 browser scenario is unnecessary unless a smoke reveals regression.
-
-No PR, merge, master update, or principal runtime mutation is authorized by this document.
+No PR, merge, master update, or principal runtime mutation is authorized without explicit maintainer approval.
