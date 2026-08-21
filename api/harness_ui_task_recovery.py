@@ -1,4 +1,4 @@
-"""H5 recovery plus H6.1/H6.2 human-UAT polish extensions for Harness."""
+"""H5 recovery plus H6.1/H6.2/H6.3 human-UAT polish extensions for Harness."""
 from __future__ import annotations
 
 import re
@@ -63,7 +63,12 @@ _H5_RECOVERY_BOOT = """s.onload=function(){
             var h62=document.createElement('script');
             h62.src='/harness-polish2.js';
             h62.onload=function(){
-              if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+              var h63=document.createElement('script');
+              h63.src='/harness-polish3.js';
+              h63.onload=function(){
+                if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+              };
+              document.head.appendChild(h63);
             };
             document.head.appendChild(h62);
           };
@@ -159,6 +164,7 @@ def serve_harness_asset(handler, path: str) -> bool:
         "/harness-preferences.js": "harness-preferences.js",
         "/harness-locales.js": "harness-locales.js",
         "/harness-polish2.js": "harness-polish2.js",
+        "/harness-polish3.js": "harness-polish3.js",
     }
     if path in assets:
         return _serve_js_asset(handler, assets[path])
