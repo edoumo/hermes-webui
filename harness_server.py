@@ -37,6 +37,7 @@ from api.auth import (  # noqa: E402
     parse_cookie,
     reset_trusted_auth_request_state,
 )
+from api.harness_ui_bind import _LOOPBACK_HOSTS, resolve_harness_bind  # noqa: E402
 from api.harness_ui_task_recovery import (  # noqa: E402
     handle_harness_request,
     harness_enabled,
@@ -46,14 +47,6 @@ from api.helpers import _CLIENT_DISCONNECT_ERRORS, get_profile_cookie, j  # noqa
 from api.profiles import clear_request_profile, set_request_profile  # noqa: E402
 from api.routes import _check_csrf, _csrf_rejection_error  # noqa: E402
 from server import Handler, QuietHTTPServer, _ignore_sigpipe  # noqa: E402
-
-_DEFAULT_HOST = "127.0.0.1"
-_DEFAULT_PORT = 8790
-_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
-
-
-def _truthy(value: object) -> bool:
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class HarnessHandler(Handler):
@@ -144,28 +137,6 @@ class HarnessHandler(Handler):
             clear_request_profile()
 
 
-def _host_port(environ: dict[str, str] | None = None) -> tuple[str, int]:
-    env = os.environ if environ is None else environ
-    host = str(env.get("HERMES_HARNESS_HOST", _DEFAULT_HOST)).strip() or _DEFAULT_HOST
-    if host not in _LOOPBACK_HOSTS:
-        if not _truthy(env.get("HERMES_HARNESS_ALLOW_REMOTE")):
-            raise RuntimeError(
-                "Non-loopback Harness bind requires HERMES_HARNESS_ALLOW_REMOTE=1"
-            )
-        if not str(env.get("HERMES_WEBUI_PASSWORD", "")).strip():
-            raise RuntimeError(
-                "Non-loopback Harness bind requires HERMES_WEBUI_PASSWORD authentication"
-            )
-    raw_port = str(env.get("HERMES_HARNESS_PORT", _DEFAULT_PORT)).strip()
-    try:
-        port = int(raw_port)
-    except ValueError as exc:
-        raise RuntimeError("HERMES_HARNESS_PORT must be an integer") from exc
-    if port < 1 or port > 65535:
-        raise RuntimeError("HERMES_HARNESS_PORT must be between 1 and 65535")
-    return host, port
-
-
 def main() -> None:
     if not harness_enabled():
         raise SystemExit(
@@ -173,7 +144,7 @@ def main() -> None:
             "Set HERMES_WEBUI_HARNESS_UI=1 to start it."
         )
     _ignore_sigpipe()
-    host, port = _host_port()
+    host, port = resolve_harness_bind()
     httpd = QuietHTTPServer((host, port), HarnessHandler)
     stop_requested = threading.Event()
 
