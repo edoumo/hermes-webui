@@ -4,7 +4,7 @@
 The server reuses Hermes WebUI authentication and HTTP hardening but has its
 own localhost listener and its own WebUI auth state. It does not instantiate
 Hermes Agent: all worker and session operations are relayed to the canonical
-Hermes API by api.harness_ui.
+Hermes API by the Harness BFF layer.
 """
 from __future__ import annotations
 
@@ -32,7 +32,11 @@ from api.auth import (  # noqa: E402
     parse_cookie,
     reset_trusted_auth_request_state,
 )
-from api.harness_ui import handle_harness_request, harness_enabled, serve_harness_asset  # noqa: E402
+from api.harness_ui_operations import (  # noqa: E402
+    handle_harness_request,
+    harness_enabled,
+    serve_harness_asset,
+)
 from api.helpers import _CLIENT_DISCONNECT_ERRORS, get_profile_cookie, j  # noqa: E402
 from api.profiles import clear_request_profile, set_request_profile  # noqa: E402
 from api.routes import _check_csrf, _csrf_rejection_error  # noqa: E402
@@ -47,9 +51,13 @@ class HarnessHandler(Handler):
 
     @staticmethod
     def _is_harness_path(path: str) -> bool:
-        return path in {"/harness", "/harness/", "/harness.js", "/harness.css"} or path.startswith(
-            "/api/harness"
-        )
+        return path in {
+            "/harness",
+            "/harness/",
+            "/harness.js",
+            "/harness.css",
+            "/harness-operations.js",
+        } or path.startswith("/api/harness")
 
     def _begin_harness_request(self):
         self._req_t0 = time.time()
