@@ -83,9 +83,12 @@ function h4RenderWorkerControls() {
   retry.hidden = worker.status !== "FAILED";
   retry.disabled = worker.status !== "FAILED";
 
+  // The live lifecycle handle is registered only after durable bind. A
+  // STARTING row is therefore intentionally not offered as cancellable in UI;
+  // once RUNNING, the backend can prove local supervision before interrupting.
   const cancelable = worker.status === "RUNNING"
     && activation
-    && ["STARTING", "RUNNING", "CANCEL_REQUESTED"].includes(activation.state);
+    && ["RUNNING", "CANCEL_REQUESTED"].includes(activation.state);
   cancel.hidden = !cancelable;
   cancel.disabled = !cancelable || activation?.state === "CANCEL_REQUESTED";
   cancel.textContent = activation?.state === "CANCEL_REQUESTED"
@@ -142,7 +145,7 @@ async function h4CancelActivation() {
   const worker = h4CurrentWorker();
   const activation = h4CurrentActivation();
   if (!state.sessionId || !worker || !activation) return;
-  if (!["STARTING", "RUNNING"].includes(activation.state)) return;
+  if (activation.state !== "RUNNING") return;
   const confirmed = window.confirm(
     `Cancel activation ${activation.activation_id}? The durable message will only be requeued after the child is confirmed cancelled.`,
   );
