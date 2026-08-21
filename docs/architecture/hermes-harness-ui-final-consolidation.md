@@ -1,18 +1,18 @@
 # Hermes Harness UI H6 final consolidation
 
-Status: `H6_UI_CODE_IN_PROGRESS`
+Status: `H6_UI_CLEAN_CANDIDATE_READY_FOR_QUALIFICATION`
 
-Branch: `experimental/hermes-harness-ui-final-consolidation`
+Clean candidate branch: `experimental/hermes-harness-ui-h6-upstream-master`
 
-H5 WebUI baseline: `76ed367cffed37f3abe3aaa881f6a6172c0d8c37`
+Upstream base: `nesquena/hermes-webui@cfcc39194a4cfbb6c78fe8114695a70737e17bbf`
 
 Qualified H5 behavior baseline: `97f614f19cb71439028287ed87bc11679ebe76db`
 
 ## Purpose
 
-H6 is a consolidation phase, not a new Harness feature. The H5 runtime/UI
-behavior is already qualified. H6 locks that behavior into a final reviewable
-surface and documents the invariants a public integration must preserve.
+H6 is a consolidation phase, not a new Harness feature. The H5 runtime/UI behavior is already qualified. H6 locks that behavior into a clean, reviewable candidate rebuilt directly on the current upstream WebUI base.
+
+The clean candidate is additive: it does not overwrite existing upstream production files. Historical qualification-candidate notes are deliberately omitted from the public-facing diff.
 
 ## Final layering
 
@@ -47,39 +47,25 @@ The final Harness contract remains:
 
 ## H6 changes
 
-No Harness production JavaScript, BFF route or server behavior is intentionally
-changed by H6.
+No Harness production JavaScript, BFF route, or server behavior is intentionally changed by H6 relative to the H5 implementation. The clean candidate carries the existing H3-H5 Harness runtime, final architecture documentation and consolidated tests onto the current upstream base.
 
-H6 adds a final contract test that checks the complete H3-H5 surface together:
+The H6 final-contract coverage verifies the complete surface together, including one browser EventSource owner, no browser secret/header material, no localStorage persistence, localhost listener guards, the full BFF delegation chain, GET/POST-only task controls, and expected Harness assets.
 
-- one and only one browser `EventSource` constructor;
-- no browser secret/header material;
-- no localStorage persistence;
-- localhost-only server guard still present;
-- final BFF delegation chain still includes H4 operations;
-- H5 route methods remain GET/POST only;
-- every expected Harness asset is served by the standalone server.
-
-See [AI-assisted development](ai-assisted-development.md) for the voluntary
-transparency note used by this contribution.
+See [AI-assisted development](ai-assisted-development.md) for the scoped `🤖 AI-assisted development` transparency note. It applies to this Harness contribution, not unrelated upstream Hermes WebUI code.
 
 ## Qualification boundary
 
-The final H6 lab should reuse the qualified H5 browser implementation and
-perform a focused integration smoke after the backend schema adoption:
+The clean candidate is ready for isolated H6 qualification, not yet declared PASS. The final lab must pair it with the clean upstream-based Hermes Agent H6 candidate and perform focused integration smokes for:
 
 - login/auth/CSRF;
-- session selection;
-- worker list/detail;
-- one normal run;
-- one cancel/retry smoke;
-- one task DAG dispatch/recovery smoke;
-- one EventSource only;
-- no reconnect storm or 429 SSE;
-- bounded DOM after repeated updates;
+- session selection and worker projections;
+- normal Durable Worker execution;
+- cancel/retry/recovery;
+- task DAG dispatch/recovery;
+- one EventSource only with no reconnect storm or SSE 429;
+- bounded DOM/state and no browser secrets;
 - principal WebUI/runtime unchanged.
 
-A complete replay of H3-H5 browser scenarios is unnecessary unless these
-smokes reveal a regression.
+A complete replay of every H3-H5 browser scenario is unnecessary unless a smoke reveals regression.
 
-No PR, merge or principal runtime mutation is authorized by this document.
+No PR, merge, master update, or principal runtime mutation is authorized by this document.
