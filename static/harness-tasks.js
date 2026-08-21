@@ -12,25 +12,27 @@ function h5InstallStyles() {
   style.textContent = `
     .tasks-card.h5-expanded{overflow:hidden}
     .h5-graph-summary{display:flex;gap:.55rem;flex-wrap:wrap;align-items:center;font-size:.78rem;opacity:.78}
-    .h5-dag-canvas{position:relative;overflow:auto;padding:.75rem 0 1rem;min-height:180px}
+    .h5-dag-canvas{position:relative;overflow-x:auto;overflow-y:visible;padding:.75rem 0 1rem;min-height:180px;max-width:100%;scrollbar-gutter:stable}
     .h5-dag-edges{position:absolute;inset:0;pointer-events:none;overflow:visible;opacity:.35}
-    .h5-dag-levels{position:relative;display:flex;align-items:flex-start;gap:1rem;min-width:max-content;padding:.25rem .5rem}
-    .h5-dag-level{display:flex;flex-direction:column;gap:.75rem;width:260px;z-index:1}
+    .h5-dag-levels{position:relative;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(280px,1fr);gap:1rem;width:100%;min-width:max(100%,calc(var(--h5-stage-count,1) * 300px));padding:.25rem .5rem}
+    .h5-dag-level{display:flex;flex-direction:column;gap:.75rem;min-width:0;z-index:1}
     .h5-level-label{font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;opacity:.55;padding:0 .15rem}
-    .h5-task-node{border:1px solid currentColor;border-radius:10px;padding:.75rem;background:var(--panel,#111);display:flex;flex-direction:column;gap:.55rem}
+    .h5-task-node{min-width:0;border:1px solid currentColor;border-radius:10px;padding:.75rem;background:var(--panel,#111);display:flex;flex-direction:column;gap:.55rem;overflow:hidden}
     .h5-task-node.h5-ready{box-shadow:0 0 0 1px currentColor inset}
-    .h5-task-head{display:flex;justify-content:space-between;gap:.5rem;align-items:flex-start}
-    .h5-task-title{font-weight:650;overflow-wrap:anywhere}
-    .h5-task-meta,.h5-task-actions,.h5-dependency-row,.h5-assignment-row{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
+    .h5-task-head{display:flex;justify-content:space-between;gap:.5rem;align-items:flex-start;min-width:0}
+    .h5-task-title{font-weight:650;overflow-wrap:anywhere;min-width:0}
+    .h5-task-meta,.h5-task-actions,.h5-dependency-row,.h5-assignment-row{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;min-width:0}
     .h5-task-desc{font-size:.82rem;opacity:.76;white-space:pre-wrap;overflow-wrap:anywhere}
-    .h5-task-node select,.h5-task-node input,.h5-task-node textarea{max-width:100%}
-    .h5-task-node select{min-width:0;flex:1}
-    .h5-dependency-chip{display:inline-flex;gap:.25rem;align-items:center;border:1px solid currentColor;border-radius:999px;padding:.15rem .4rem;font-size:.72rem;opacity:.8}
+    .h5-task-node select,.h5-task-node input,.h5-task-node textarea{max-width:100%;min-width:0}
+    .h5-task-node select{flex:1 1 150px}
+    .h5-dependency-chip{display:inline-flex;gap:.25rem;align-items:center;border:1px solid currentColor;border-radius:999px;padding:.15rem .4rem;font-size:.72rem;opacity:.8;max-width:100%}
+    .h5-dependency-chip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .h5-chip-remove{border:0;background:transparent;color:inherit;padding:0 .1rem;cursor:pointer;font-size:.9rem}
     .h5-task-editor{display:grid;gap:.4rem;padding-top:.4rem;border-top:1px solid currentColor}
     .h5-task-editor.hidden{display:none}
     .h5-task-editor textarea{resize:vertical;min-height:64px}
     .h5-truncated{font-size:.75rem;opacity:.7;padding:.5rem}
+    @media(max-width:780px){.h5-dag-levels{grid-auto-columns:minmax(250px,1fr);min-width:max(100%,calc(var(--h5-stage-count,1) * 270px))}}
   `;
   document.head.appendChild(style);
 }
@@ -40,7 +42,7 @@ function h5InstallSummary() {
   if (card) card.classList.add("h5-expanded");
   const head = card?.querySelector(".card-head");
   if (!head || $("taskGraphSummary")) return;
-  const summary = el("div", "h5-graph-summary", "graph loading");
+  const summary = el("div", "h5-graph-summary", "");
   summary.id = "taskGraphSummary";
   const actions = head.querySelector("button")?.parentElement || head;
   actions.insertBefore(summary, actions.lastElementChild || null);
@@ -81,8 +83,8 @@ function h5Levels(tasks) {
 }
 
 function h5StatusLabel(task) {
-  if (task.status === "pending") return task.ready ? "READY" : "BLOCKED";
-  return String(task.status || "unknown").toUpperCase();
+  if (task.status === "pending") return task.ready ? t("ready") : t("blocked");
+  return statusLabel(task.status || "unknown");
 }
 
 async function h5Post(task, suffix, body) {
@@ -107,7 +109,7 @@ async function h5AssignWorker(task, workerId) {
 async function h5SaveEdit(task, editor) {
   const subject = editor.querySelector('[data-h5-field="subject"]').value.trim();
   const description = editor.querySelector('[data-h5-field="description"]').value;
-  if (!subject) return showToast("Task subject is required", true);
+  if (!subject) return showToast(t("subject") + " required", true);
   try {
     await h5Post(task, "edit", {
       subject,
@@ -115,7 +117,7 @@ async function h5SaveEdit(task, editor) {
       expected_revision: task.revision,
     });
     await loadSessionData();
-    showToast("Task updated");
+    showToast(t("taskUpdated"));
   } catch (error) { showToast(error.message, true); }
 }
 
@@ -146,7 +148,7 @@ async function h5Dispatch(task) {
     const result = await h5Post(task, "dispatch", {
       expected_revision: task.revision,
     });
-    showToast(`Task dispatched as ${result.activation_id || "activation"}`);
+    showToast(t("taskDispatched", { id: result.activation_id || "activation" }));
     scheduleRefresh(state.sessionId);
   } catch (error) { showToast(error.message, true); }
 }
@@ -176,14 +178,14 @@ function h5TaskNode(task, allTasks) {
   if (task.description) node.append(el("div", "h5-task-desc", task.description));
   const meta = el("div", "h5-task-meta");
   meta.append(el("span", "", `rev ${task.revision ?? "?"}`));
-  if (task.last_run?.activation_id) meta.append(el("span", "", task.last_run.state || "run"));
+  if (task.last_run?.activation_id) meta.append(el("span", "", statusLabel(task.last_run.state || "run")));
   node.append(meta);
 
   const assignment = el("div", "h5-assignment-row");
-  assignment.append(el("span", "muted", "Worker"));
+  assignment.append(el("span", "muted", t("worker")));
   const select = document.createElement("select");
-  select.append(new Option("Unassigned", ""));
-  for (const worker of state.workers) {
+  select.append(new Option(t("unassigned"), ""));
+  for (const worker of state.workers.filter((item) => item.status !== "DISABLED")) {
     select.append(new Option(worker.label || worker.worker_id, worker.worker_id));
   }
   select.value = task.worker_id || "";
@@ -192,13 +194,13 @@ function h5TaskNode(task, allTasks) {
   assignment.append(select);
   if (task.worker_id) {
     const worker = h5Worker(task.worker_id);
-    assignment.append(el("span", `state ${String(worker?.status || "").toLowerCase()}`, worker?.status || "unknown"));
+    assignment.append(el("span", `state ${String(worker?.status || "").toLowerCase()}`, statusLabel(worker?.status || "unknown")));
   }
   node.append(assignment);
 
   const blockers = el("div", "h5-dependency-row");
-  blockers.append(el("span", "muted", "Blocked by"));
-  if (!(task.blocked_by || []).length) blockers.append(el("span", "", "none"));
+  blockers.append(el("span", "muted", t("blockedBy")));
+  if (!(task.blocked_by || []).length) blockers.append(el("span", "", t("none")));
   for (const blockerId of task.blocked_by || []) {
     const blocker = allTasks.get(blockerId);
     const chip = el("span", "h5-dependency-chip");
@@ -206,7 +208,7 @@ function h5TaskNode(task, allTasks) {
     if (task.status === "pending") {
       const remove = el("button", "h5-chip-remove", "×");
       remove.type = "button";
-      remove.title = "Remove dependency";
+      remove.title = t("removeDependency");
       remove.addEventListener("click", () => h5RemoveDependency(task, blockerId));
       chip.append(remove);
     }
@@ -217,13 +219,13 @@ function h5TaskNode(task, allTasks) {
   if (task.status === "pending") {
     const dependency = el("div", "h5-dependency-row");
     const depSelect = document.createElement("select");
-    depSelect.append(new Option("Add dependency…", ""));
+    depSelect.append(new Option(t("addDependency"), ""));
     const existing = new Set(task.blocked_by || []);
     for (const candidate of allTasks.values()) {
       if (candidate.task_id === task.task_id || existing.has(candidate.task_id)) continue;
       depSelect.append(new Option(candidate.subject || candidate.task_id, candidate.task_id));
     }
-    const add = el("button", "ghost", "Add");
+    const add = el("button", "ghost", t("add"));
     add.type = "button";
     add.disabled = depSelect.options.length <= 1;
     add.addEventListener("click", () => h5AddDependency(task, depSelect.value));
@@ -233,17 +235,17 @@ function h5TaskNode(task, allTasks) {
 
   const actions = el("div", "h5-task-actions");
   if (task.status === "pending") {
-    const edit = el("button", "ghost", "Edit");
+    const edit = el("button", "ghost", t("edit"));
     edit.type = "button";
     actions.append(edit);
 
-    const dispatch = el("button", "primary", "Dispatch");
+    const dispatch = el("button", "primary", t("dispatch"));
     dispatch.type = "button";
     const worker = task.worker_id ? h5Worker(task.worker_id) : null;
     dispatch.disabled = !task.ready || !task.worker_id || worker?.status !== "DORMANT";
     dispatch.title = !task.ready
-      ? "Complete blockers first"
-      : (!task.worker_id ? "Assign a worker first" : (worker?.status !== "DORMANT" ? "Worker is not dormant" : "Dispatch ready task"));
+      ? t("completeBlockers")
+      : (!task.worker_id ? t("assignWorkerFirst") : (worker?.status !== "DORMANT" ? t("workerNotDormant") : t("dispatchReady")));
     dispatch.addEventListener("click", () => h5Dispatch(task));
     actions.append(dispatch);
 
@@ -256,14 +258,14 @@ function h5TaskNode(task, allTasks) {
     description.dataset.h5Field = "description";
     description.maxLength = 16000;
     description.value = task.description || "";
-    const save = el("button", "primary", "Save");
+    const save = el("button", "primary", t("save"));
     save.type = "button";
     save.addEventListener("click", () => h5SaveEdit(task, editor));
     editor.append(subject, description, save);
     edit.addEventListener("click", () => editor.classList.toggle("hidden"));
     node.append(actions, editor);
   } else if (["failed", "cancelled"].includes(task.status)) {
-    const reset = el("button", "ghost", "Reset to pending");
+    const reset = el("button", "ghost", t("resetPending"));
     reset.type = "button";
     reset.addEventListener("click", () => h5ResetTask(task));
     actions.append(reset);
@@ -318,10 +320,15 @@ function h5RenderGraph() {
   const summary = $("taskGraphSummary");
   const counts = state.h5Graph.counts || {};
   if (summary) {
-    summary.textContent = `${counts.ready || 0} ready · ${counts.blocked || 0} blocked · ${counts.in_progress || 0} running · ${counts.completed || 0} done`;
+    summary.textContent = t("graphSummary", {
+      ready: counts.ready || 0,
+      blocked: counts.blocked || 0,
+      running: counts.in_progress || 0,
+      done: counts.completed || 0,
+    });
   }
   if (!tasks.length) {
-    root.append(el("div", "muted", "No tasks for this session."));
+    root.append(el("div", "muted", t("noTasks")));
     return;
   }
 
@@ -330,15 +337,18 @@ function h5RenderGraph() {
   svg.classList.add("h5-dag-edges");
   const levelsRoot = el("div", "h5-dag-levels");
   const allTasks = new Map(tasks.map((task) => [task.task_id, task]));
-  for (const [level, group] of h5Levels(tasks)) {
+  const levels = h5Levels(tasks);
+  levelsRoot.style.setProperty("--h5-stage-count", String(Math.max(1, levels.length)));
+  for (const [level, group] of levels) {
     const column = el("div", "h5-dag-level");
-    column.append(el("div", "h5-level-label", `Stage ${level + 1}`));
+    column.append(el("div", "h5-level-label", t("stage", { number: level + 1 })));
     for (const task of group) column.append(h5TaskNode(task, allTasks));
     levelsRoot.append(column);
   }
   canvas.append(svg, levelsRoot);
   root.append(canvas);
-  if (state.h5Graph.truncated) root.append(el("div", "h5-truncated", "Graph truncated to 100 tasks."));
+  if (state.h5Graph.truncated) root.append(el("div", "h5-truncated", t("graphTruncated")));
+  canvas.scrollLeft = 0;
   requestAnimationFrame(h5DrawEdges);
 }
 
