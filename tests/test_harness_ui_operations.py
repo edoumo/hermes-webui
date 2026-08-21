@@ -94,7 +94,8 @@ def test_h4_controls_are_state_gated_and_projection_bounded():
 
     assert 'worker.status !== "FAILED"' in source
     assert 'worker.status === "RUNNING"' in source
-    assert '["STARTING", "RUNNING", "CANCEL_REQUESTED"]' in source
+    assert '["RUNNING", "CANCEL_REQUESTED"]' in source
+    assert 'activation.state !== "RUNNING"' in source
     assert 'worker.status !== "DORMANT"' in source
     assert "items.slice(0, 50)" in source
     assert "localStorage" not in source
