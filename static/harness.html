@@ -1,11 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hermes Harness UI</title>
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="dark light">
 <link rel="stylesheet" href="/harness.css">
+<script src="/harness-preferences.js"></script>
 <script>
 window.__HERMES_HARNESS__={csrfToken:""};
 (function(){
@@ -39,48 +40,67 @@ window.__HERMES_HARNESS__={csrfToken:""};
       <div class="brand-mark">H</div>
       <div>
         <div class="brand-title">Hermes Harness</div>
-        <div class="brand-subtitle">Durable worker control plane</div>
+        <div class="brand-subtitle" data-i18n="brandSubtitle">Durable worker control plane</div>
       </div>
     </div>
     <div class="connection">
       <span class="status-dot" id="statusDot"></span>
-      <span id="connectionLabel">Connecting</span>
-      <button class="ghost" id="refreshAllBtn" type="button">Refresh</button>
+      <span id="connectionLabel" data-i18n="connecting">Connecting</span>
+      <label class="topbar-select" for="localeSelect">
+        <span class="sr-only" data-i18n="language">Language</span>
+        <select id="localeSelect" aria-label="Language">
+          <option value="en">EN</option>
+          <option value="fr">FR</option>
+        </select>
+      </label>
+      <button class="icon-btn topbar-icon" id="themeToggle" type="button" aria-label="Theme">☀</button>
+      <button class="ghost" id="refreshAllBtn" type="button" data-i18n="refresh">Refresh</button>
     </div>
   </header>
 
   <main class="layout">
     <aside class="rail sessions-rail">
       <div class="section-head">
-        <div>
-          <div class="eyebrow">Scope</div>
-          <h2>Sessions</h2>
+        <div class="rail-title-block">
+          <div class="eyebrow" data-i18n="scope">Scope</div>
+          <h2 data-i18n="sessions">Sessions</h2>
         </div>
-        <button class="icon-btn" id="newSessionBtn" type="button" title="Create session">+</button>
+        <div class="rail-actions">
+          <button class="icon-btn subtle-icon" id="showArchivedSessionsBtn" type="button" data-i18n-title="showArchivedSessions">◎</button>
+          <button class="icon-btn subtle-icon" id="archiveSessionBtn" type="button" data-i18n-title="archiveSession">↧</button>
+          <button class="icon-btn" id="newSessionBtn" type="button" title="Create session">+</button>
+          <button class="icon-btn collapse-btn" type="button" data-collapse-rail="sessions" data-i18n-title="collapsePanel">‹</button>
+        </div>
       </div>
       <div id="sessionList" class="stack-list"></div>
+      <div class="rail-resizer" data-rail-resizer="sessions" role="separator" aria-orientation="vertical"></div>
     </aside>
 
     <aside class="rail workers-rail">
       <div class="section-head">
-        <div>
-          <div class="eyebrow">Durable identities</div>
-          <h2>Workers</h2>
+        <div class="rail-title-block">
+          <div class="eyebrow" data-i18n="workersEyebrow">Durable identities</div>
+          <h2 data-i18n="workers">Workers</h2>
         </div>
-        <button class="icon-btn" id="newWorkerBtn" type="button" title="Create worker">+</button>
+        <div class="rail-actions">
+          <button class="icon-btn subtle-icon" id="showArchivedWorkersBtn" type="button" data-i18n-title="showArchivedWorkers">◎</button>
+          <button class="icon-btn" id="newWorkerBtn" type="button" title="Create worker">+</button>
+          <button class="icon-btn collapse-btn" type="button" data-collapse-rail="workers" data-i18n-title="collapsePanel">‹</button>
+        </div>
       </div>
       <div class="summary-strip">
         <span id="workerCount">0 workers</span>
-        <span id="eventState">events idle</span>
+        <span id="eventState" data-i18n="eventsIdle">events idle</span>
       </div>
       <div id="workerList" class="stack-list"></div>
+      <div class="rail-resizer" data-rail-resizer="workers" role="separator" aria-orientation="vertical"></div>
     </aside>
 
     <section class="workspace">
       <div class="empty-state" id="emptyState">
         <div class="empty-icon">∞</div>
-        <h1>Durable work, visible.</h1>
-        <p>Select a Hermes session and a worker to inspect its durable transcript, activations and task graph.</p>
+        <h1 data-i18n="durableVisible">Durable work, visible.</h1>
+        <p data-i18n="selectWorkerHelp">Select a Hermes session and a worker to inspect its durable transcript, activations and task graph.</p>
       </div>
 
       <div id="workerView" class="worker-view hidden">
@@ -90,15 +110,18 @@ window.__HERMES_HARNESS__={csrfToken:""};
             <h1 id="workerTitle">Worker</h1>
             <div class="chips" id="workerChips"></div>
           </div>
-          <button class="primary" id="runWorkerBtn" type="button">Run next</button>
+          <div class="worker-actions">
+            <button class="ghost" id="workerSettingsBtn" type="button" data-i18n="workerSettings">Worker settings</button>
+            <button class="primary" id="runWorkerBtn" type="button" data-i18n="runNext">Run next</button>
+          </div>
         </div>
 
         <div class="compose-card">
-          <label for="messageInput">New durable message</label>
-          <textarea id="messageInput" rows="3" maxlength="32000" placeholder="Give this worker its next mandate…"></textarea>
+          <label for="messageInput" data-i18n="newDurableMessage">New durable message</label>
+          <textarea id="messageInput" rows="3" maxlength="32000" data-i18n-placeholder="messagePlaceholder" placeholder="Give this worker its next mandate…"></textarea>
           <div class="compose-actions">
-            <input id="messageIdInput" maxlength="256" placeholder="Optional idempotency key">
-            <button class="primary" id="sendMessageBtn" type="button">Queue message</button>
+            <input id="messageIdInput" maxlength="256" data-i18n-placeholder="idempotencyPlaceholder" placeholder="Optional idempotency key">
+            <button class="primary" id="sendMessageBtn" type="button" data-i18n="queueMessage">Queue message</button>
           </div>
         </div>
 
@@ -106,10 +129,10 @@ window.__HERMES_HARNESS__={csrfToken:""};
           <section class="card transcript-card">
             <div class="card-head">
               <div>
-                <div class="eyebrow">Bounded history</div>
-                <h3>Messages</h3>
+                <div class="eyebrow" data-i18n="boundedHistory">Bounded history</div>
+                <h3 data-i18n="messages">Messages</h3>
               </div>
-              <span class="muted">latest 50</span>
+              <span class="muted" data-i18n="latest50">latest 50</span>
             </div>
             <div id="messageList" class="timeline"></div>
           </section>
@@ -117,10 +140,10 @@ window.__HERMES_HARNESS__={csrfToken:""};
           <section class="card activation-card">
             <div class="card-head">
               <div>
-                <div class="eyebrow">Runtime instances</div>
-                <h3>Activations</h3>
+                <div class="eyebrow" data-i18n="runtimeInstances">Runtime instances</div>
+                <h3 data-i18n="activations">Activations</h3>
               </div>
-              <span class="muted">latest 50</span>
+              <span class="muted" data-i18n="latest50">latest 50</span>
             </div>
             <div id="activationList" class="timeline compact"></div>
           </section>
@@ -129,10 +152,10 @@ window.__HERMES_HARNESS__={csrfToken:""};
         <section class="card tasks-card">
           <div class="card-head">
             <div>
-              <div class="eyebrow">Dependency graph</div>
-              <h3>Tasks</h3>
+              <div class="eyebrow" data-i18n="dependencyGraph">Dependency graph</div>
+              <h3 data-i18n="tasks">Tasks</h3>
             </div>
-            <button class="ghost" id="newTaskBtn" type="button">New task</button>
+            <button class="ghost" id="newTaskBtn" type="button" data-i18n="newTask">New task</button>
           </div>
           <div id="taskList" class="task-grid"></div>
         </section>
@@ -143,25 +166,40 @@ window.__HERMES_HARNESS__={csrfToken:""};
 
 <dialog id="workerDialog">
   <form method="dialog" id="workerForm">
-    <div class="dialog-head"><h2>Create durable worker</h2><button type="button" data-dialog-close class="icon-btn">×</button></div>
-    <label>Label<input name="label" maxlength="160" required placeholder="research-worker"></label>
-    <label>Role<select name="role"><option value="leaf">Leaf</option><option value="orchestrator">Orchestrator</option></select></label>
-    <label>Model<input name="model" maxlength="512" placeholder="deepseek-v4-flash:0731 (optional)"></label>
-    <label>Toolsets<input name="toolsets" placeholder="terminal, web (optional)"></label>
-    <div class="dialog-actions"><button type="button" data-dialog-close class="ghost">Cancel</button><button type="submit" class="primary" id="createWorkerSubmit">Create</button></div>
+    <div class="dialog-head"><h2 data-i18n="createWorker">Create durable worker</h2><button type="button" data-dialog-close class="icon-btn">×</button></div>
+    <label><span data-i18n="label">Label</span><input name="label" maxlength="160" required placeholder="research-worker"></label>
+    <label><span data-i18n="role">Role</span><select name="role"><option value="leaf" data-i18n="leaf">Leaf</option><option value="orchestrator" data-i18n="orchestrator">Orchestrator</option></select></label>
+    <label><span data-i18n="model">Model</span><input name="model" list="modelOptions" maxlength="512" placeholder="deepseek-v4-flash:0731"><small class="field-help" data-i18n="modelHelp">Choose an advertised model or type an explicit model id.</small></label>
+    <label><span data-i18n="toolsets">Toolsets</span><input name="toolsets" placeholder="terminal, web"></label>
+    <div class="dialog-actions"><button type="button" data-dialog-close class="ghost" data-i18n="cancel">Cancel</button><button type="submit" class="primary" id="createWorkerSubmit" data-i18n="create">Create</button></div>
+  </form>
+</dialog>
+
+<dialog id="workerSettingsDialog">
+  <form method="dialog" id="workerSettingsForm">
+    <div class="dialog-head"><h2 data-i18n="editWorker">Worker settings</h2><button type="button" data-dialog-close class="icon-btn">×</button></div>
+    <label><span data-i18n="label">Label</span><input name="label" id="workerSettingsLabel" maxlength="160" required></label>
+    <label><span data-i18n="model">Model</span><input name="model" id="workerSettingsModel" list="modelOptions" maxlength="512"><small class="field-help" data-i18n="modelHelp">Choose an advertised model or type an explicit model id.</small></label>
+    <label><span data-i18n="toolsets">Toolsets</span><input name="toolsets" id="workerSettingsToolsets"></label>
+    <div class="danger-zone">
+      <button type="button" class="ghost danger-action" id="archiveWorkerBtn" data-i18n="archiveWorker">Archive worker</button>
+      <button type="button" class="ghost" id="restoreWorkerBtn" data-i18n="restoreWorker">Restore worker</button>
+    </div>
+    <div class="dialog-actions"><button type="button" data-dialog-close class="ghost" data-i18n="cancel">Cancel</button><button type="submit" class="primary" id="saveWorkerSettingsBtn" data-i18n="save">Save</button></div>
   </form>
 </dialog>
 
 <dialog id="taskDialog">
   <form method="dialog" id="taskForm">
-    <div class="dialog-head"><h2>Create task</h2><button type="button" data-dialog-close class="icon-btn">×</button></div>
-    <label>Subject<input name="subject" maxlength="300" required></label>
-    <label>Description<textarea name="description" rows="4" maxlength="16000"></textarea></label>
-    <label>Assign worker<select name="worker_id" id="taskWorkerSelect"><option value="">Unassigned</option></select></label>
-    <div class="dialog-actions"><button type="button" data-dialog-close class="ghost">Cancel</button><button type="submit" class="primary" id="createTaskSubmit">Create</button></div>
+    <div class="dialog-head"><h2 data-i18n="createTask">Create task</h2><button type="button" data-dialog-close class="icon-btn">×</button></div>
+    <label><span data-i18n="subject">Subject</span><input name="subject" maxlength="300" required></label>
+    <label><span data-i18n="description">Description</span><textarea name="description" rows="4" maxlength="16000"></textarea></label>
+    <label><span data-i18n="assignWorker">Assign worker</span><select name="worker_id" id="taskWorkerSelect"><option value="" data-i18n="unassigned">Unassigned</option></select></label>
+    <div class="dialog-actions"><button type="button" data-dialog-close class="ghost" data-i18n="cancel">Cancel</button><button type="submit" class="primary" id="createTaskSubmit" data-i18n="create">Create</button></div>
   </form>
 </dialog>
 
+<datalist id="modelOptions"></datalist>
 <div id="toast" class="toast hidden" role="status"></div>
 </body>
 </html>
