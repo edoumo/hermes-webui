@@ -67,11 +67,13 @@ def test_uat_preferences_are_the_only_localstorage_surface_and_are_ui_only():
 
 def test_final_server_defaults_loopback_and_remote_bind_is_guarded():
     server = (ROOT / "harness_server.py").read_text(encoding="utf-8")
+    bind_policy = (ROOT / "api" / "harness_ui_bind.py").read_text(encoding="utf-8")
 
-    assert '_DEFAULT_HOST = "127.0.0.1"' in server
-    assert 'HERMES_HARNESS_ALLOW_REMOTE' in server
-    assert 'HERMES_WEBUI_PASSWORD' in server
-    assert "Non-loopback Harness bind requires" in server
+    assert '_DEFAULT_HOST = "127.0.0.1"' in bind_policy
+    assert 'HERMES_HARNESS_ALLOW_REMOTE' in bind_policy
+    assert 'HERMES_WEBUI_PASSWORD' in bind_policy
+    assert "Non-loopback Harness bind requires" in bind_policy
+    assert "resolve_harness_bind" in server
     assert "from api.harness_ui_task_recovery import" in server
 
     for asset in (
