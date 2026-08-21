@@ -1,12 +1,19 @@
 "use strict";
 
 const cfg = window.__HERMES_HARNESS__ || {};
+const ui = window.HarnessUI || {};
+const t = (key, vars = {}) => typeof ui.t === "function" ? ui.t(key, vars) : key;
+const statusLabel = (value) => typeof ui.statusLabel === "function" ? ui.statusLabel(value) : String(value || "");
+const roleLabel = (value) => typeof ui.roleLabel === "function" ? ui.roleLabel(value) : String(value || "");
+
 const state = {
   sessions: [],
   sessionId: null,
   workers: [],
   workerId: null,
+  currentWorker: null,
   tasks: [],
+  models: [],
   events: null,
   eventsSessionId: null,
   eventLastId: null,
@@ -89,66 +96,122 @@ function sessionItems(payload) {
   return Array.isArray(candidates) ? candidates.map(sessionFrom).filter(Boolean) : [];
 }
 
+function modelItems(payload) {
+  const candidates = payload?.data || payload?.models || payload?.items || [];
+  if (!Array.isArray(candidates)) return [];
+  const values = [];
+  for (const item of candidates) {
+    const value = typeof item === "string" ? item : (item?.id || item?.model || item?.name);
+    const cleaned = String(value || "").trim();
+    if (cleaned && !values.includes(cleaned)) values.push(cleaned);
+  }
+  return values;
+}
+
+function visibleSessions() {
+  const showArchived = typeof ui.showArchivedSessions === "function" && ui.showArchivedSessions();
+  return state.sessions.filter((session) => showArchived || !(ui.isSessionArchived?.(session.id)));
+}
+
+function visibleWorkers() {
+  const showArchived = typeof ui.showArchivedWorkers === "function" && ui.showArchivedWorkers();
+  return state.workers.filter((worker) => showArchived || worker.status !== "DISABLED");
+}
+
+function updateArchiveControls() {
+  const sessionArchive = $("archiveSessionBtn");
+  if (sessionArchive) sessionArchive.disabled = !state.sessionId;
+  const showSessions = $("showArchivedSessionsBtn");
+  if (showSessions) {
+    const showing = !!ui.showArchivedSessions?.();
+    showSessions.title = t(showing ? "hideArchivedSessions" : "showArchivedSessions");
+    showSessions.setAttribute("aria-label", showSessions.title);
+  }
+  const showWorkers = $("showArchivedWorkersBtn");
+  if (showWorkers) {
+    const showing = !!ui.showArchivedWorkers?.();
+    showWorkers.title = t(showing ? "hideArchivedWorkers" : "showArchivedWorkers");
+    showWorkers.setAttribute("aria-label", showWorkers.title);
+  }
+}
+
 function renderSessions() {
   const root = $("sessionList");
   root.replaceChildren();
-  if (!state.sessions.length) {
-    root.append(el("div", "muted", "No Hermes API sessions yet."));
+  const sessions = visibleSessions();
+  if (!sessions.length) {
+    root.append(el("div", "muted", t("noSessions")));
+    updateArchiveControls();
     return;
   }
-  for (const session of state.sessions) {
-    const btn = el("button", `list-item${session.id === state.sessionId ? " active" : ""}`);
+  for (const session of sessions) {
+    const archived = !!ui.isSessionArchived?.(session.id);
+    const btn = el("button", `list-item${session.id === state.sessionId ? " active" : ""}${archived ? " archived" : ""}`);
     btn.type = "button";
     btn.append(el("div", "list-title", session.title));
     const meta = el("div", "list-meta");
     meta.append(el("span", "", session.id));
     const model = session.model || session.model_id || "session";
-    meta.append(el("span", "", model));
+    meta.append(el("span", archived ? "state disabled" : "", archived ? t("archive") : model));
     btn.append(meta);
     btn.addEventListener("click", () => selectSession(session.id));
     root.append(btn);
   }
+  updateArchiveControls();
 }
 
 function renderWorkers() {
   const root = $("workerList");
   root.replaceChildren();
-  $("workerCount").textContent = `${state.workers.length} worker${state.workers.length === 1 ? "" : "s"}`;
+  const workers = visibleWorkers();
+  const suffix = state.workers.length === 1 ? "" : "s";
+  $("workerCount").textContent = t("workerCount", { count: state.workers.length, suffix });
   if (!state.sessionId) {
-    root.append(el("div", "muted", "Select a session."));
+    root.append(el("div", "muted", t("selectSession")));
+    updateArchiveControls();
     return;
   }
-  if (!state.workers.length) {
-    root.append(el("div", "muted", "No durable workers in this session."));
+  if (!workers.length) {
+    root.append(el("div", "muted", t("noWorkers")));
+    updateArchiveControls();
     return;
   }
-  for (const worker of state.workers) {
-    const btn = el("button", `list-item${worker.worker_id === state.workerId ? " active" : ""}`);
+  for (const worker of workers) {
+    const archived = worker.status === "DISABLED";
+    const btn = el("button", `list-item${worker.worker_id === state.workerId ? " active" : ""}${archived ? " archived" : ""}`);
     btn.type = "button";
     btn.append(el("div", "list-title", worker.label || worker.worker_id));
     const meta = el("div", "list-meta");
-    meta.append(el("span", `state ${String(worker.status || "").toLowerCase()}`, worker.status || "unknown"));
-    meta.append(el("span", "", worker.role || "leaf"));
+    meta.append(el("span", `state ${String(worker.status || "").toLowerCase()}`, statusLabel(worker.status || "unknown")));
+    meta.append(el("span", "", roleLabel(worker.role || "leaf")));
     btn.append(meta);
     btn.addEventListener("click", () => selectWorker(worker.worker_id));
     root.append(btn);
   }
   fillTaskWorkerSelect();
+  updateArchiveControls();
 }
 
 function fillTaskWorkerSelect() {
   const select = $("taskWorkerSelect");
-  select.replaceChildren(new Option("Unassigned", ""));
-  for (const worker of state.workers) {
+  select.replaceChildren(new Option(t("unassigned"), ""));
+  for (const worker of state.workers.filter((item) => item.status !== "DISABLED")) {
     select.add(new Option(worker.label || worker.worker_id, worker.worker_id));
   }
+}
+
+function fillModelOptions() {
+  const datalist = $("modelOptions");
+  if (!datalist) return;
+  datalist.replaceChildren();
+  for (const model of state.models) datalist.append(new Option(model, model));
 }
 
 function eventNode(kind, timestamp, body, stateName) {
   const item = el("article", "event");
   const head = el("div", "event-head");
   head.append(el("span", "", kind));
-  head.append(el("span", stateName ? `state ${String(stateName).toLowerCase()}` : "", stateName || formatTime(timestamp)));
+  head.append(el("span", stateName ? `state ${String(stateName).toLowerCase()}` : "", stateName ? statusLabel(stateName) : formatTime(timestamp)));
   item.append(head);
   item.append(el("div", "event-body", body || ""));
   return item;
@@ -158,13 +221,13 @@ function formatTime(value) {
   if (!value) return "";
   const num = Number(value);
   const date = Number.isFinite(num) ? new Date(num * 1000) : new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString(ui.locale?.() || undefined);
 }
 
 function renderMessages(items) {
   const root = $("messageList");
   root.replaceChildren();
-  if (!items.length) return root.append(el("div", "muted", "No durable messages."));
+  if (!items.length) return root.append(el("div", "muted", t("noMessages")));
   for (const message of items) {
     const direction = message.direction === "worker" ? "WORKER" : "PARENT";
     root.append(eventNode(direction, message.created_at, message.content, message.state));
@@ -174,7 +237,7 @@ function renderMessages(items) {
 function renderActivations(items) {
   const root = $("activationList");
   root.replaceChildren();
-  if (!items.length) return root.append(el("div", "muted", "No activations yet."));
+  if (!items.length) return root.append(el("div", "muted", t("noActivations")));
   for (const activation of items) {
     const bits = [activation.activation_id];
     if (activation.subagent_id) bits.push(`subagent ${activation.subagent_id}`);
@@ -187,22 +250,22 @@ function renderActivations(items) {
 function renderTasks() {
   const root = $("taskList");
   root.replaceChildren();
-  if (!state.tasks.length) return root.append(el("div", "muted", "No tasks for this session."));
+  if (!state.tasks.length) return root.append(el("div", "muted", t("noTasks")));
   for (const task of state.tasks) {
     const card = el("article", `task${task.ready ? " ready" : ""}`);
     card.append(el("div", "task-title", task.subject || task.task_id));
-    card.append(el("div", "task-desc", task.description || (task.ready ? "Ready" : "No description")));
+    card.append(el("div", "task-desc", task.description || (task.ready ? t("readyDescription") : t("noDescription"))));
     const meta = el("div", "list-meta");
-    meta.append(el("span", `state ${String(task.status || "").toLowerCase()}`, task.status || "pending"));
+    meta.append(el("span", `state ${String(task.status || "").toLowerCase()}`, statusLabel(task.status || "pending")));
     meta.append(el("span", "", `rev ${task.revision ?? "?"}`));
     card.append(meta);
     if (Array.isArray(task.blocked_by) && task.blocked_by.length) {
-      card.append(el("div", "task-desc", `Blocked by: ${task.blocked_by.join(", ")}`));
+      card.append(el("div", "task-desc", `${t("blockedBy")}: ${task.blocked_by.join(", ")}`));
     }
     const actions = el("div", "task-actions");
-    if (task.status === "pending") actions.append(taskAction(task, "in_progress", "Start"));
-    if (task.status === "in_progress") actions.append(taskAction(task, "completed", "Complete"));
-    if (!["completed", "failed", "cancelled"].includes(task.status)) actions.append(taskAction(task, "failed", "Fail"));
+    if (task.status === "pending") actions.append(taskAction(task, "in_progress", t("running")));
+    if (task.status === "in_progress") actions.append(taskAction(task, "completed", t("completed")));
+    if (!["completed", "failed", "cancelled"].includes(task.status)) actions.append(taskAction(task, "failed", t("failed")));
     card.append(actions);
     root.append(card);
   }
@@ -223,11 +286,22 @@ function taskAction(task, nextStatus, label) {
   return button;
 }
 
+async function loadModels() {
+  try {
+    const payload = await api("/api/harness/models");
+    state.models = modelItems(payload);
+    fillModelOptions();
+  } catch (_) {
+    state.models = [];
+    fillModelOptions();
+  }
+}
+
 async function loadSessions({ selectFirst = true } = {}) {
   const payload = await api("/api/harness/sessions");
   state.sessions = sessionItems(payload);
   const exists = state.sessions.some((s) => s.id === state.sessionId);
-  if (!exists) state.sessionId = selectFirst && state.sessions.length ? state.sessions[0].id : null;
+  if (!exists) state.sessionId = selectFirst && visibleSessions().length ? visibleSessions()[0].id : null;
   renderSessions();
   if (state.sessionId) await loadSessionData();
   else {
@@ -242,13 +316,45 @@ async function createSession() {
     const created = sessionFrom(payload?.session || payload);
     await loadSessions({ selectFirst: false });
     if (created) await selectSession(created.id);
-    showToast("Hermes API session created");
+    showToast(t("sessionCreated"));
   } catch (error) { showToast(error.message, true); }
+}
+
+async function archiveSelectedSession() {
+  if (!state.sessionId || typeof ui.setSessionArchived !== "function") return;
+  const current = state.sessionId;
+  const alreadyArchived = !!ui.isSessionArchived?.(current);
+  if (alreadyArchived) {
+    ui.setSessionArchived(current, false);
+    renderSessions();
+    return;
+  }
+  if (!window.confirm(t("archiveSessionConfirm"))) return;
+  ui.setSessionArchived(current, true);
+  if (!ui.showArchivedSessions?.()) {
+    const next = visibleSessions().find((session) => session.id !== current);
+    state.sessionId = next?.id || null;
+    state.workerId = null;
+    state.currentWorker = null;
+    renderSessions();
+    if (state.sessionId) await loadSessionData();
+    else {
+      closeEvents();
+      state.workers = [];
+      state.tasks = [];
+      renderWorkers();
+      renderTasks();
+      clearWorkerView();
+    }
+  } else {
+    renderSessions();
+  }
 }
 
 async function selectSession(sessionId) {
   state.sessionId = safeId(sessionId);
   state.workerId = null;
+  state.currentWorker = null;
   renderSessions();
   await loadSessionData();
 }
@@ -269,10 +375,10 @@ async function loadSessionData() {
     renderTasks();
     startEvents();
     if (state.workerId) await loadWorkerDetail(); else clearWorkerView();
-    setConnection("online", "Hermes API connected");
+    setConnection("online", t("apiConnected"));
   } catch (error) {
     if (state.sessionId !== sid) return;
-    setConnection("error", "Hermes API unavailable");
+    setConnection("error", t("apiUnavailable"));
     showToast(error.message, true);
   }
 }
@@ -284,8 +390,21 @@ async function selectWorker(workerId) {
 }
 
 function clearWorkerView() {
+  state.currentWorker = null;
   $("workerView").classList.add("hidden");
   $("emptyState").classList.remove("hidden");
+}
+
+function renderWorkerIdentity(worker) {
+  state.currentWorker = worker;
+  $("workerTitle").textContent = worker.label || worker.worker_id;
+  $("workerIdLabel").textContent = worker.worker_id;
+  const chips = $("workerChips");
+  chips.replaceChildren();
+  const values = [statusLabel(worker.status), roleLabel(worker.role), worker.model, ...(worker.toolsets || [])].filter(Boolean);
+  values.forEach((value) => chips.append(el("span", "chip", value)));
+  const settings = $("workerSettingsBtn");
+  if (settings) settings.disabled = worker.status === "RUNNING";
 }
 
 async function loadWorkerDetail() {
@@ -301,16 +420,70 @@ async function loadWorkerDetail() {
     const worker = workerPayload.worker || workerPayload;
     $("emptyState").classList.add("hidden");
     $("workerView").classList.remove("hidden");
-    $("workerTitle").textContent = worker.label || worker.worker_id;
-    $("workerIdLabel").textContent = worker.worker_id;
-    const chips = $("workerChips");
-    chips.replaceChildren();
-    [worker.status, worker.role, worker.model, ...(worker.toolsets || [])].filter(Boolean).forEach((value) => chips.append(el("span", "chip", value)));
+    renderWorkerIdentity(worker);
     renderMessages(Array.isArray(messages.items) ? messages.items.slice(0, 50) : []);
     renderActivations(Array.isArray(activations.items) ? activations.items.slice(0, 50) : []);
   } catch (error) {
     if (state.sessionId === sid && state.workerId === wid) showToast(error.message, true);
   }
+}
+
+function openWorkerSettings() {
+  const worker = state.currentWorker || state.workers.find((item) => item.worker_id === state.workerId);
+  if (!worker) return;
+  $("workerSettingsLabel").value = worker.label || "";
+  $("workerSettingsModel").value = worker.model || "";
+  $("workerSettingsToolsets").value = (worker.toolsets || []).join(", ");
+  const archived = worker.status === "DISABLED";
+  $("archiveWorkerBtn").hidden = archived;
+  $("restoreWorkerBtn").hidden = !archived;
+  $("saveWorkerSettingsBtn").disabled = worker.status === "RUNNING" || archived;
+  $("workerSettingsLabel").disabled = archived;
+  $("workerSettingsModel").disabled = archived;
+  $("workerSettingsToolsets").disabled = archived;
+  $("workerSettingsDialog").showModal();
+}
+
+async function saveWorkerSettings(event) {
+  event.preventDefault();
+  const worker = state.currentWorker;
+  if (!state.sessionId || !worker) return;
+  const toolsets = $("workerSettingsToolsets").value.split(",").map((value) => value.trim()).filter(Boolean);
+  const model = $("workerSettingsModel").value.trim();
+  try {
+    const result = await api(`/api/harness/sessions/${safeId(state.sessionId)}/workers/${safeId(worker.worker_id)}/edit`, {
+      method: "POST",
+      body: {
+        label: $("workerSettingsLabel").value.trim(),
+        model: model || null,
+        toolsets: [...new Set(toolsets)],
+        expected_revision: worker.revision,
+      },
+    });
+    state.currentWorker = result.worker || state.currentWorker;
+    $("workerSettingsDialog").close();
+    await loadSessionData();
+    showToast(t("workerUpdated"));
+  } catch (error) { showToast(error.message, true); }
+}
+
+async function setCurrentWorkerArchived(archived) {
+  const worker = state.currentWorker;
+  if (!state.sessionId || !worker) return;
+  if (archived && !window.confirm(t("archiveWorkerConfirm"))) return;
+  try {
+    await api(`/api/harness/sessions/${safeId(state.sessionId)}/workers/${safeId(worker.worker_id)}/${archived ? "archive" : "restore"}`, {
+      method: "POST",
+      body: { expected_revision: worker.revision },
+    });
+    $("workerSettingsDialog").close();
+    if (archived && !ui.showArchivedWorkers?.()) {
+      state.workerId = null;
+      state.currentWorker = null;
+    }
+    await loadSessionData();
+    showToast(t(archived ? "workerArchived" : "workerRestored"));
+  } catch (error) { showToast(error.message, true); }
 }
 
 function closeEvents() {
@@ -332,11 +505,11 @@ function startEvents() {
   const source = new EventSource(`/api/harness/sessions/${sid}/worker-events`, { withCredentials: true });
   state.events = source;
   state.eventsSessionId = sid;
-  $("eventState").textContent = "events connecting";
+  $("eventState").textContent = t("eventsConnecting");
 
   source.addEventListener("open", () => {
     if (state.events !== source || state.eventsSessionId !== sid) return;
-    $("eventState").textContent = "events live";
+    $("eventState").textContent = t("eventsLive");
   });
   source.addEventListener("durable_workers.changed", (event) => {
     if (state.events !== source || state.eventsSessionId !== sid || state.sessionId !== sid) return;
@@ -347,7 +520,7 @@ function startEvents() {
   });
   source.addEventListener("error", () => {
     if (state.events !== source || state.eventsSessionId !== sid) return;
-    $("eventState").textContent = "events reconnecting";
+    $("eventState").textContent = t("eventsReconnecting");
   });
 }
 
@@ -362,7 +535,7 @@ function scheduleRefresh(sessionId = state.sessionId) {
 async function queueMessage() {
   if (!state.sessionId || !state.workerId) return;
   const message = $("messageInput").value.trim();
-  if (!message) return showToast("Message is empty", true);
+  if (!message) return showToast(t("messageEmpty"), true);
   const body = { message };
   const messageId = $("messageIdInput").value.trim();
   if (messageId) body.message_id = messageId;
@@ -370,7 +543,7 @@ async function queueMessage() {
     await api(`/api/harness/sessions/${safeId(state.sessionId)}/workers/${safeId(state.workerId)}/messages`, { method: "POST", body });
     $("messageInput").value = "";
     await loadSessionData();
-    showToast("Message queued durably");
+    showToast(t("messageQueued"));
   } catch (error) { showToast(error.message, true); }
 }
 
@@ -380,7 +553,7 @@ async function runWorker() {
   button.disabled = true;
   try {
     const result = await api(`/api/harness/sessions/${safeId(state.sessionId)}/workers/${safeId(state.workerId)}/run`, { method: "POST", body: {} });
-    showToast(`Activation ${result.activation_id || "started"}`);
+    showToast(t("activationStarted", { id: result.activation_id || "started" }));
     scheduleRefresh();
   } catch (error) { showToast(error.message, true); }
   finally { button.disabled = false; }
@@ -403,7 +576,7 @@ async function createWorkerFromDialog(event) {
     form.reset();
     await loadSessionData();
     if (result.worker?.worker_id) await selectWorker(result.worker.worker_id);
-    showToast("Durable worker created");
+    showToast(t("workerCreated"));
   } catch (error) { showToast(error.message, true); }
 }
 
@@ -421,33 +594,55 @@ async function createTaskFromDialog(event) {
     $("taskDialog").close();
     form.reset();
     await loadSessionData();
-    showToast("Task created");
+    showToast(t("taskCreated"));
   } catch (error) { showToast(error.message, true); }
 }
 
 function wire() {
   $("refreshAllBtn").addEventListener("click", () => loadSessions({ selectFirst: false }));
   $("newSessionBtn").addEventListener("click", createSession);
+  $("archiveSessionBtn").addEventListener("click", archiveSelectedSession);
   $("newWorkerBtn").addEventListener("click", () => {
-    if (!state.sessionId) return showToast("Select or create a session first", true);
+    if (!state.sessionId) return showToast(t("selectSession"), true);
     $("workerDialog").showModal();
   });
+  $("workerSettingsBtn").addEventListener("click", openWorkerSettings);
+  $("archiveWorkerBtn").addEventListener("click", () => setCurrentWorkerArchived(true));
+  $("restoreWorkerBtn").addEventListener("click", () => setCurrentWorkerArchived(false));
   $("newTaskBtn").addEventListener("click", () => $("taskDialog").showModal());
   $("sendMessageBtn").addEventListener("click", queueMessage);
   $("runWorkerBtn").addEventListener("click", runWorker);
   $("workerForm").addEventListener("submit", createWorkerFromDialog);
+  $("workerSettingsForm").addEventListener("submit", saveWorkerSettings);
   $("taskForm").addEventListener("submit", createTaskFromDialog);
   window.addEventListener("beforeunload", closeEvents);
+  window.addEventListener("hermes-harness-ui-change", (event) => {
+    const kind = event.detail?.kind;
+    ui.applyStaticTranslations?.();
+    updateArchiveControls();
+    if (kind === "layout") {
+      if (typeof h5DrawEdges === "function") requestAnimationFrame(h5DrawEdges);
+      return;
+    }
+    renderSessions();
+    renderWorkers();
+    if (kind === "locale") {
+      if (state.sessionId) loadSessionData();
+      else renderTasks();
+    }
+  });
 }
 
 async function boot() {
   wire();
+  ui.applyStaticTranslations?.();
+  ui.applyRailPreferences?.();
   try {
-    await api("/api/harness/models");
-    setConnection("online", "Hermes API connected");
+    await loadModels();
+    setConnection("online", t("apiConnected"));
     await loadSessions();
   } catch (error) {
-    setConnection("error", "Hermes API unavailable");
+    setConnection("error", t("apiUnavailable"));
     showToast(error.message, true);
   }
 }
