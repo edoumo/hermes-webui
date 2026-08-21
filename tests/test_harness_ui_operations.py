@@ -54,11 +54,17 @@ def test_h4_shell_injects_operations_layer_before_h3_boot_event():
     assert "harness-operations.js" not in html
 
 
-def test_h4_server_uses_operations_bff_without_modifying_legacy_server():
+def test_h4_server_preserves_operations_bff_through_h5_layering():
     harness_server = (ROOT / "harness_server.py").read_text(encoding="utf-8")
+    h5_recovery = (ROOT / "api" / "harness_ui_task_recovery.py").read_text(
+        encoding="utf-8"
+    )
     legacy_server = (ROOT / "server.py").read_text(encoding="utf-8")
 
-    assert "from api.harness_ui_operations import" in harness_server
+    # H5 owns the final server entrypoint, but must keep delegating to H4's
+    # operations layer rather than bypassing or duplicating it.
+    assert "from api.harness_ui_task_recovery import" in harness_server
+    assert "from api import harness_ui_operations as operations" in h5_recovery
     assert '"/harness-operations.js"' in harness_server
     assert "harness_ui_operations" not in legacy_server
 
