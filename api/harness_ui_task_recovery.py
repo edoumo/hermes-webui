@@ -1,4 +1,4 @@
-"""H5 failed-task recovery extension for the Harness task BFF."""
+"""H5 recovery plus H6.1 UAT-polish extensions for the Harness BFF."""
 from __future__ import annotations
 
 import re
@@ -18,6 +18,30 @@ _RECOVERY_ROUTE = (
         rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/recover$"
     ),
     "/api/sessions/{session_id}/worker-tasks/{task_id}/recover",
+)
+
+_H61_WORKER_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    (
+        "POST",
+        re.compile(
+            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/edit$"
+        ),
+        "/api/sessions/{session_id}/workers/{worker_id}/edit",
+    ),
+    (
+        "POST",
+        re.compile(
+            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/archive$"
+        ),
+        "/api/sessions/{session_id}/workers/{worker_id}/archive",
+    ),
+    (
+        "POST",
+        re.compile(
+            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/restore$"
+        ),
+        "/api/sessions/{session_id}/workers/{worker_id}/restore",
+    ),
 )
 
 _H5_RECOVERY_BOOT = """s.onload=function(){
@@ -43,11 +67,18 @@ _H5_RECOVERY_BOOT = """s.onload=function(){
 def resolve_upstream(method: str, browser_path: str) -> Optional[str]:
     method = str(method or "").upper()
     prefix = "/api/harness"
-    if browser_path.startswith(prefix) and method == _RECOVERY_ROUTE[0]:
+    if browser_path.startswith(prefix):
         suffix = browser_path[len(prefix) :] or "/"
-        match = _RECOVERY_ROUTE[1].fullmatch(suffix)
-        if match:
-            return _RECOVERY_ROUTE[2].format(**match.groupdict())
+        if method == _RECOVERY_ROUTE[0]:
+            match = _RECOVERY_ROUTE[1].fullmatch(suffix)
+            if match:
+                return _RECOVERY_ROUTE[2].format(**match.groupdict())
+        for route_method, pattern, template in _H61_WORKER_ROUTES:
+            if route_method != method:
+                continue
+            match = pattern.fullmatch(suffix)
+            if match:
+                return template.format(**match.groupdict())
     return tasks.resolve_upstream(method, browser_path)
 
 
@@ -62,7 +93,7 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
         if parsed.query:
             j(
                 handler,
-                {"error": "H5 Harness task recovery does not accept query parameters"},
+                {"error": "Harness operator control routes do not accept query parameters"},
                 status=400,
             )
             return True
@@ -94,14 +125,10 @@ def _serve_recovery_html(handler) -> bool:
     return True
 
 
-def serve_harness_asset(handler, path: str) -> bool:
-    if path in {"/harness", "/harness/"}:
-        return _serve_recovery_html(handler)
-    if path != "/harness-task-recovery.js":
-        return tasks.serve_harness_asset(handler, path)
-    target = Path(__file__).resolve().parent.parent / "static" / "harness-task-recovery.js"
+def _serve_js_asset(handler, filename: str) -> bool:
+    target = Path(__file__).resolve().parent.parent / "static" / filename
     if not target.is_file():
-        j(handler, {"error": "Harness task recovery asset missing"}, status=500)
+        j(handler, {"error": "Harness asset missing"}, status=500)
         return True
     data = target.read_bytes()
     handler.send_response(200)
@@ -111,6 +138,16 @@ def serve_harness_asset(handler, path: str) -> bool:
     handler.end_headers()
     handler.wfile.write(data)
     return True
+
+
+def serve_harness_asset(handler, path: str) -> bool:
+    if path in {"/harness", "/harness/"}:
+        return _serve_recovery_html(handler)
+    if path == "/harness-task-recovery.js":
+        return _serve_js_asset(handler, "harness-task-recovery.js")
+    if path == "/harness-preferences.js":
+        return _serve_js_asset(handler, "harness-preferences.js")
+    return tasks.serve_harness_asset(handler, path)
 
 
 harness_enabled = foundation.harness_enabled
