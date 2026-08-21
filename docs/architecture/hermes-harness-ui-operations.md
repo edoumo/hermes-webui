@@ -1,10 +1,16 @@
 # Hermes Harness UI H4 operational controls
 
-Status: `H4_UI_CODE_READY_FOR_INTEGRATED_QUALIFICATION`
+Status: `H4_HARNESS_UI_OPERATIONS_STATUS=PASS`
 
 Branch: `experimental/hermes-harness-ui-operations`
 
 Qualified H3 code baseline: `e67722264f109e22f4f7fd2b29ec3898f69083c5`
+
+Qualified H4 Harness SHA: `decc07a86ef109f953e9f13433cd8990dff249ef`
+
+Qualified H4 backend behavior SHA: `2e14c4f719a9c85bb79b9a44dc72a15cecfb1c39`
+
+Backend plugin version: `0.3.2`
 
 H4 backend branch: `experimental/durable-workers-operational-recovery`
 
@@ -92,10 +98,24 @@ H4 preserves H3 requirements:
 * no second EventSource implementation;
 * bounded worker/task/message/activation projections.
 
-## Qualification status
+## Qualification result
 
-The H4 UI/BFF extension, state-gated controls, contract tests and documentation are complete for this first slice and ready for isolated integrated qualification.
+`H4_HARNESS_UI_OPERATIONS_STATUS=PASS` as part of consolidated `H4_OPERATIONAL_RECOVERY_STATUS=PASS`.
 
-No real H4 runtime recipe has run yet. The integrated lab must validate the repository tests, a real operator cancellation of a RUNNING child, retry of a real fail-closed worker, SSE-driven UI transitions, state gating and clean coexistence with the principal runtime before H4 can be marked PASS.
+The isolated real-runtime recipes established:
+
+* operational summary displayed once per selected session with correct session-scoped active/failed/cap values;
+* Cancel hidden in `STARTING`, visible in `RUNNING`, disabled as `Cancellation requested`, then removed after terminal cancellation;
+* Retry visible only for a real `FAILED` worker and removed automatically after successful recovery;
+* `Run next` disabled for invalid worker states and restored when the canonical projection returns `DORMANT`;
+* UI transitions are driven by API/SSE state rather than optimistic browser-side mutations;
+* operator cancellation, same-message rerun, fail-closed drain, retry CAS and post-retry success all completed against real Durable Worker state;
+* one EventSource per selected session, no H4-created EventSource, no reconnect storm and no SSE 429 storm;
+* bounded DOM with no duplicated controls or operational summary;
+* cross-session isolation, CSRF and browser secret boundary remain intact;
+* query-bearing H4 control calls remain rejected by the BFF while normal operations remain available;
+* the principal runtime, legacy WebUI and principal configuration remained untouched and lab shutdown was clean.
+
+The qualified Harness code SHA remains `decc07a86ef109f953e9f13433cd8990dff249ef`; no WebUI code changes were required by the backend B4/B4-final corrections.
 
 No PR, merge or principal runtime mutation is authorized at this stage.
