@@ -1,4 +1,4 @@
-"""H6/H6.1 final-contract tests for the complete Harness surface."""
+"""H6/H6.1/H6.2 final-contract tests for the complete Harness surface."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,8 +15,9 @@ _BROWSER_RUNTIME_ASSETS = (
     "harness-operations.js",
     "harness-tasks.js",
     "harness-task-recovery.js",
+    "harness-polish2.js",
 )
-_BROWSER_ASSETS = ("harness-preferences.js",) + _BROWSER_RUNTIME_ASSETS
+_BROWSER_ASSETS = ("harness-locales.js", "harness-preferences.js") + _BROWSER_RUNTIME_ASSETS
 
 
 def _asset_source(name: str) -> str:
@@ -47,9 +48,11 @@ def test_final_browser_assets_keep_server_side_secret_boundary():
 
 def test_uat_preferences_are_the_only_localstorage_surface_and_are_ui_only():
     runtime = "\n".join(_asset_source(name) for name in _BROWSER_RUNTIME_ASSETS)
+    locales = _asset_source("harness-locales.js")
     preferences = _asset_source("harness-preferences.js")
 
     assert "localStorage" not in runtime
+    assert "localStorage" not in locales
     assert "localStorage" in preferences
     assert 'const PREFIX = "hermesHarness.ui."' in preferences
     for forbidden in (
@@ -78,10 +81,12 @@ def test_final_server_defaults_loopback_and_remote_bind_is_guarded():
 
     for asset in (
         "/harness.js",
+        "/harness-locales.js",
         "/harness-preferences.js",
         "/harness-operations.js",
         "/harness-tasks.js",
         "/harness-task-recovery.js",
+        "/harness-polish2.js",
     ):
         assert f'"{asset}"' in server
 
@@ -103,29 +108,31 @@ def test_final_bff_delegation_chain_preserves_h4_operations():
     assert "harness_ui_task_recovery" not in legacy_server
 
 
-def test_final_script_boot_order_is_h3_h4_h5_recovery_then_boot():
+def test_final_script_boot_order_is_h3_h4_h5_recovery_h62_then_boot():
     boot = recovery._H5_RECOVERY_BOOT
 
     h4 = boot.index("h4.src='/harness-operations.js'")
     h5 = boot.index("h5.src='/harness-tasks.js'")
     h5_recovery = boot.index("h5r.src='/harness-task-recovery.js'")
+    h62 = boot.index("h62.src='/harness-polish2.js'")
     dom_boot = boot.index("document.dispatchEvent(new Event('DOMContentLoaded'))")
 
-    assert h4 < h5 < h5_recovery < dom_boot
+    assert h4 < h5 < h5_recovery < h62 < dom_boot
     assert boot.count("/harness-operations.js") == 1
     assert boot.count("/harness-tasks.js") == 1
     assert boot.count("/harness-task-recovery.js") == 1
+    assert boot.count("/harness-polish2.js") == 1
 
 
-def test_final_h5_bff_surface_adds_only_get_and_post_controls():
+def test_final_bff_surface_remains_non_destructive():
     h5_methods = {method for method, _pattern, _template in tasks._H5_ROUTES}
-    h61_methods = {
-        method for method, _pattern, _template in recovery._H61_WORKER_ROUTES
-    }
+    h61_methods = {method for method, _pattern, _template in recovery._H61_WORKER_ROUTES}
+    h62_methods = {method for method, _pattern, _template in recovery._H62_ROUTES}
 
     assert h5_methods <= {"GET", "POST"}
     assert h61_methods == {"POST"}
+    assert h62_methods == {"GET"}
     assert recovery._RECOVERY_ROUTE[0] == "POST"
-    assert "DELETE" not in h5_methods | h61_methods
-    assert "PUT" not in h5_methods | h61_methods
-    assert "PATCH" not in h5_methods | h61_methods
+    assert "DELETE" not in h5_methods | h61_methods | h62_methods
+    assert "PUT" not in h5_methods | h61_methods | h62_methods
+    assert "PATCH" not in h5_methods | h61_methods | h62_methods
