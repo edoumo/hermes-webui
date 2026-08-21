@@ -79,13 +79,11 @@ def test_uat_worker_archive_is_backend_reversible_not_hard_delete():
     js = _static("harness.js")
     bff = _read("api/harness_ui_task_recovery.py")
 
-    for action in ("archive", "restore"):
-        assert f'/{action}$' in bff
-        assert f'archived ? "archive" : "restore"' in js or action == "restore"
-    assert 'DELETE' not in "\n".join(
-        line for line in bff.splitlines() if "_H61_WORKER_ROUTES" in line or "/workers/" in line
-    )
+    assert '/archive$' in bff
+    assert '/restore$' in bff
+    assert 'archived ? "archive" : "restore"' in js
     assert 'status !== "DISABLED"' in js
+    assert 'method: "DELETE"' not in js
 
 
 def test_uat_session_archive_is_explicitly_browser_local_not_data_deletion():
@@ -102,7 +100,8 @@ def test_uat_worker_controls_are_post_only_through_exact_bff_allowlist():
     sid = "session_1"
     wid = "dw_1"
     for action in ("edit", "archive", "restore"):
-        path = f"/api/harness/sessions/{sid}/workers/{wid}/{action}"
-        assert recovery.resolve_upstream("POST", path) == path.removeprefix("/api/harness")
+        browser_path = f"/api/harness/sessions/{sid}/workers/{wid}/{action}"
+        upstream_path = f"/api/sessions/{sid}/workers/{wid}/{action}"
+        assert recovery.resolve_upstream("POST", browser_path) == upstream_path
         for method in ("GET", "PUT", "PATCH", "DELETE"):
-            assert recovery.resolve_upstream(method, path) is None
+            assert recovery.resolve_upstream(method, browser_path) is None
