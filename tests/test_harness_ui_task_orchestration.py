@@ -1,4 +1,4 @@
-"""H5 Harness task-orchestration contract tests."""
+"""H5/H6.1 Harness task-orchestration contract tests."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_h5_bff_routes_are_exact_and_preserve_h4():
     sid = "session_1"
+    wid = "dw_1"
     tid = "dwt_1"
 
     assert recovery.resolve_upstream(
@@ -33,6 +34,14 @@ def test_h5_bff_routes_are_exact_and_preserve_h4():
         "POST", f"/api/harness/sessions/{sid}/worker-tasks/{tid}/recover"
     ) == f"/api/sessions/{sid}/worker-tasks/{tid}/recover"
 
+    for action in ("edit", "archive", "restore"):
+        assert recovery.resolve_upstream(
+            "POST", f"/api/harness/sessions/{sid}/workers/{wid}/{action}"
+        ) == f"/api/sessions/{sid}/workers/{wid}/{action}"
+        assert recovery.resolve_upstream(
+            "GET", f"/api/harness/sessions/{sid}/workers/{wid}/{action}"
+        ) is None
+
     h4_path = f"/api/harness/sessions/{sid}/worker-operations"
     assert recovery.resolve_upstream("GET", h4_path) == operations.resolve_upstream(
         "GET", h4_path
@@ -50,6 +59,7 @@ def test_h5_shell_loads_h3_h4_h5_recovery_then_boot():
     assert operations._H3_BOOT in html
     served = html.replace(operations._H3_BOOT, recovery._H5_RECOVERY_BOOT, 1)
 
+    assert "/harness-preferences.js" in served
     assert "h4.src='/harness-operations.js'" in served
     assert "h5.src='/harness-tasks.js'" in served
     assert "h5r.src='/harness-task-recovery.js'" in served
@@ -69,6 +79,7 @@ def test_h5_server_uses_recovery_bff_and_serves_all_task_assets():
     legacy = (ROOT / "server.py").read_text(encoding="utf-8")
 
     assert "from api.harness_ui_task_recovery import" in server
+    assert '"/harness-preferences.js"' in server
     assert '"/harness-tasks.js"' in server
     assert '"/harness-task-recovery.js"' in server
     assert "harness_ui_task_recovery" not in legacy
@@ -89,7 +100,8 @@ def test_h5_browser_assets_have_dag_recovery_without_eventsource_or_secrets():
     assert "expected_revision: task.revision" in combined
     assert "h5Levels" in source
     assert "h5DrawEdges" in source
-    assert "Recover task" in recovery_source
+    assert 't("recoverTask")' in recovery_source
+    assert 'button.textContent === "Reset to pending"' not in recovery_source
 
     assert "new EventSource" not in combined
     assert "eventsSessionId" not in combined
@@ -100,7 +112,7 @@ def test_h5_browser_assets_have_dag_recovery_without_eventsource_or_secrets():
     assert "localStorage" not in combined
 
 
-def test_h5_projection_remains_bounded_and_state_driven():
+def test_h5_projection_remains_bounded_state_driven_and_single_stage_fits():
     source = (ROOT / "static" / "harness-tasks.js").read_text(encoding="utf-8")
 
     assert "graph.tasks) ? graph.tasks.slice(0, 100)" in source
@@ -109,3 +121,7 @@ def test_h5_projection_remains_bounded_and_state_driven():
     assert 'worker?.status !== "DORMANT"' in source
     assert "scheduleRefresh(state.sessionId)" in source
     assert "state.h5GraphSessionId === state.sessionId" in source
+    assert "min-width:max-content" not in source
+    assert '--h5-stage-count' in source
+    assert 'width:100%' in source
+    assert 'canvas.scrollLeft = 0' in source
