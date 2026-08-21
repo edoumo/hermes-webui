@@ -2,9 +2,14 @@
 """Experimental standalone entry point for Hermes Harness UI.
 
 The server reuses Hermes WebUI authentication and HTTP hardening but has its
-own localhost listener and its own WebUI auth state. It does not instantiate
-Hermes Agent: all worker and session operations are relayed to the canonical
-Hermes API by the Harness BFF layer.
+own listener and its own WebUI auth state. It does not instantiate Hermes
+Agent: all worker and session operations are relayed to the canonical Hermes
+API by the Harness BFF layer.
+
+The default remains loopback-only. A non-loopback/LAN bind requires both an
+explicit ``HERMES_HARNESS_ALLOW_REMOTE=1`` opt-in and a configured
+``HERMES_WEBUI_PASSWORD`` so a convenience bind cannot silently publish an
+unauthenticated control plane.
 """
 from __future__ import annotations
 
@@ -44,6 +49,11 @@ from server import Handler, QuietHTTPServer, _ignore_sigpipe  # noqa: E402
 
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8790
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _truthy(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class HarnessHandler(Handler):
@@ -56,6 +66,7 @@ class HarnessHandler(Handler):
             "/harness/",
             "/harness.js",
             "/harness.css",
+            "/harness-preferences.js",
             "/harness-operations.js",
             "/harness-tasks.js",
             "/harness-task-recovery.js",
@@ -133,11 +144,19 @@ class HarnessHandler(Handler):
             clear_request_profile()
 
 
-def _host_port() -> tuple[str, int]:
-    host = str(os.environ.get("HERMES_HARNESS_HOST", _DEFAULT_HOST)).strip() or _DEFAULT_HOST
-    if host not in {"127.0.0.1", "::1", "localhost"}:
-        raise RuntimeError("Hermes Harness UI foundation is localhost-only")
-    raw_port = str(os.environ.get("HERMES_HARNESS_PORT", _DEFAULT_PORT)).strip()
+def _host_port(environ: dict[str, str] | None = None) -> tuple[str, int]:
+    env = os.environ if environ is None else environ
+    host = str(env.get("HERMES_HARNESS_HOST", _DEFAULT_HOST)).strip() or _DEFAULT_HOST
+    if host not in _LOOPBACK_HOSTS:
+        if not _truthy(env.get("HERMES_HARNESS_ALLOW_REMOTE")):
+            raise RuntimeError(
+                "Non-loopback Harness bind requires HERMES_HARNESS_ALLOW_REMOTE=1"
+            )
+        if not str(env.get("HERMES_WEBUI_PASSWORD", "")).strip():
+            raise RuntimeError(
+                "Non-loopback Harness bind requires HERMES_WEBUI_PASSWORD authentication"
+            )
+    raw_port = str(env.get("HERMES_HARNESS_PORT", _DEFAULT_PORT)).strip()
     try:
         port = int(raw_port)
     except ValueError as exc:
@@ -173,6 +192,8 @@ def main() -> None:
     print(f"  Hermes Harness UI listening on http://{host}:{port}/harness", flush=True)
     print("  Backend: canonical Hermes API (server-side authenticated BFF)", flush=True)
     print(f"  Harness auth state: {_harness_state}", flush=True)
+    if host not in _LOOPBACK_HOSTS:
+        print("  Remote/LAN bind explicitly enabled with password authentication", flush=True)
     try:
         httpd.serve_forever()
     finally:
