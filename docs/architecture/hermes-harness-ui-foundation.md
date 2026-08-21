@@ -1,12 +1,12 @@
 # Hermes Harness UI foundation
 
-Status: `FOUNDATION_CODE_READY_FOR_INTEGRATED_QUALIFICATION`
+Status: `H3_HARNESS_UI_FOUNDATION_STATUS=PASS`
 
 This document describes the first experimental Hermes Harness UI slice. It is
 not a replacement for the shipped Hermes WebUI yet and it is not enabled by
 default.
 
-## Qualified backend baseline
+## Qualified baselines
 
 Hermes Agent repository: `edoumo/hermes-agent`
 
@@ -23,6 +23,25 @@ actual DeepSeek activations, cold context continuity, worker serialization,
 global activation capacity, task DAG writes, SSE invalidation, cooperative
 drain, crash recovery, session isolation and process-metadata privacy.
 
+Hermes WebUI qualified Harness code revision:
+
+`e67722264f109e22f4f7fd2b29ec3898f69083c5`
+
+H3 real-browser verdict:
+
+`H3_B3_REQUALIFICATION_STATUS=PASS`
+
+`H3_HARNESS_UI_FOUNDATION_STATUS=PASS`
+
+The qualification proved same-session EventSource reuse, real SSE mutation
+delivery, real activation auto-refresh, durable context continuity, native
+Last-Event-ID reconnection semantics, session-switch stream ownership, bounded
+DOM state and clean shutdown while leaving the principal runtime untouched.
+
+The final real qualification report is recorded in:
+
+`docs/architecture/hermes-harness-ui-foundation-final-report.md`
+
 ## WebUI source baseline
 
 The `edoumo/hermes-webui` default branch was intentionally not used as the
@@ -36,6 +55,10 @@ Branch:
 `experimental/hermes-harness-ui-foundation`
 
 The fork's `master` branch remains untouched.
+
+Documentation commits may follow the qualified code revision on the
+experimental branch. The code SHA above remains the authoritative H3 runtime
+qualification point unless a later code change is explicitly requalified.
 
 ## Architecture
 
@@ -109,6 +132,10 @@ Controls:
 11. The SSE bridge forwards only a validated `Last-Event-ID`.
 12. Host process metadata remains filtered by the already-qualified H2.1 API.
 
+The B2 real qualification proved that the BFF SSE bridge relays small frames
+line-by-line with immediate flush, rather than waiting for block-sized reads or
+EOF.
+
 ## WebUI auth and CSRF
 
 `harness_server.py` reuses the WebUI authentication implementation and the
@@ -125,7 +152,11 @@ The token is then attached to Harness POST requests as:
 
 This token is a WebUI anti-CSRF value. It is not the Hermes API Bearer.
 
-## Memory posture
+The final real recipe proved authenticated `403` rejection without a CSRF token
+and success with the valid session-bound token while preserving a separate
+`hermes_harness_session` cookie namespace.
+
+## Memory and EventSource posture
 
 The first UI intentionally avoids the architecture that caused large-session
 browser memory pressure in older WebUI generations.
@@ -140,10 +171,22 @@ Rules in this slice:
 6. No reasoning trace or tool activity journal is mirrored into the page.
 7. SSE carries only invalidation/change tokens; after a change the client
    reloads bounded projections.
-8. Switching sessions closes the old EventSource before opening another.
+8. A selected session owns at most one EventSource.
+9. Same-session refreshes reuse the existing EventSource.
+10. Switching sessions closes the previous EventSource before opening the new
+    session stream.
+11. Native EventSource reconnection owns Last-Event-ID behavior; the client does
+    not synthesize that header.
+12. Duplicate event IDs and callbacks from stale streams are ignored.
+13. Stale asynchronous session/worker loads cannot overwrite a newly selected
+    scope.
 
-The first implementation therefore treats the Hermes API as source of truth and
-the DOM as a bounded projection, not as a second conversation database.
+The H3 B3 real recipe observed DOM nodes `283 -> 165 -> 283`, zero net growth,
+empty transcript `localStorage`, one EventSource maximum, zero zombie streams
+and zero SSE storm 429 responses.
+
+The implementation therefore treats Hermes API as source of truth and the DOM
+as a bounded projection, not as a second conversation database.
 
 ## First UI surface
 
@@ -179,46 +222,56 @@ python harness_server.py
 
 The server refuses a non-loopback `HERMES_HARNESS_HOST`.
 
-## Current validation status
+Laboratory recipe note: do not use `VAR=x env -u VAR <command>` when `VAR` is
+intended to remain set for the child process. In particular, unsetting
+`HERMES_WEBUI_PASSWORD` that way disables Harness auth and can produce false
+CSRF-smoke failures. Verify the final child-process environment before
+interpreting auth/CSRF results.
 
-Repository contract tests are in:
+## Validation status
 
-`tests/test_harness_ui_foundation.py`
+The final H3 code revision passed:
 
-They cover:
+* `26/26` targeted tests
+* Python compile checks
+* JavaScript syntax check
+* BFF SSE raw-stream qualification
+* EventSource same-session reuse
+* initial-frame no-loop behavior
+* real mutation auto-refresh
+* real activation auto-refresh to `SUCCEEDED`
+* durable context continuity without marker reinjection
+* native Last-Event-ID reconnection behavior
+* A/B session stream ownership
+* zero zombie streams
+* zero SSE storm 429 responses
+* bounded DOM projection
+* auth, CSRF, secret-boundary and session-isolation smokes
+* clean laboratory shutdown
 
-* default-off behavior
-* exact route/method allowlist
-* path traversal rejection
-* loopback-only Hermes API origin
-* rejection of URL credentials
-* server-side Bearer placement
-* request/query bounds
-* absence of Bearer/API-key references in browser assets
-* explicit bounded browser projections
-* EventSource use
-* CSRF/auth hooks
-* separate Harness auth state
-* non-modification of `server.py`
+The principal runtime, legacy WebUI and principal configuration were not
+modified by the qualification.
 
 The upstream WebUI GitHub Actions workflow runs only for pushes to `master` or
 pull requests targeting `master`. No PR is authorized for this experimental
-branch, so a full upstream CI result must not be claimed yet.
+branch, so this H3 PASS is based on the targeted repository tests and the real
+isolated integrated recipe, not a claimed upstream full-CI run.
 
-The next gate is an isolated integrated recipe on the real Hermes environment,
-using the qualified H2.1 API. It must not modify the main WebUI, Gateway, Hermes
-runtime, systemd, network, firewall or public exposure.
+## Gate result and next slice boundary
 
-## Gate to the next slice
+The original gate to the next UI slice is satisfied:
 
-The foundation can move to the next UI slice only after an integrated recipe
-proves at least:
+* Harness and legacy WebUI coexist without cookie/session interference: PASS
+* browser never receives the Hermes API Bearer: PASS
+* authenticated CSRF-protected worker creation: PASS
+* real worker activation STARTING -> RUNNING -> SUCCEEDED through the BFF: PASS
+* SSE refreshes the bounded UI after worker state changes: PASS
+* session isolation remains fail-closed through the BFF: PASS
+* browser projection remains bounded across repeated refresh/activation cycles: PASS
+* stopping Harness leaves legacy WebUI and Hermes runtime untouched: PASS
 
-* Harness and legacy WebUI can coexist without cookie/session interference
-* Browser never receives the Hermes API Bearer
-* authenticated CSRF-protected worker creation works
-* real worker activation goes STARTING -> RUNNING -> SUCCEEDED through the BFF
-* SSE refreshes the bounded UI after worker state changes
-* session isolation remains fail-closed through the BFF
-* browser memory remains bounded during repeated refresh/activation cycles
-* stopping Harness leaves legacy WebUI and Hermes runtime untouched
+The next slice may therefore build on H3 without reopening B2/B3 unless a
+regression is observed. Public exposure, replacement of the legacy WebUI,
+systemd deployment, merge to `master`, and broader destructive or steering
+controls remain outside this qualification and require their own design and
+gates.
