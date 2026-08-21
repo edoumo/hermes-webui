@@ -31,7 +31,9 @@ The UI does not claim that the configured maximum minus the session count is glo
 The button is shown only when:
 
 * selected worker is `RUNNING`;
-* its current activation is `STARTING`, `RUNNING`, or `CANCEL_REQUESTED`.
+* its current activation is `RUNNING` or already `CANCEL_REQUESTED`.
+
+The transient durable `STARTING` state is intentionally not presented as cancellable in H4 UI. The capability-bearing live lifecycle handle is registered only after bind, so offering cancel earlier would create a short window where the backend must correctly reject the request as not locally supervised.
 
 For `CANCEL_REQUESTED`, the button becomes disabled and reports that cancellation is already pending.
 
