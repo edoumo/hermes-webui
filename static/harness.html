@@ -6,6 +6,7 @@
 <title>Hermes Harness UI</title>
 <meta name="color-scheme" content="dark light">
 <link rel="stylesheet" href="/harness.css">
+<script src="/harness-locales.js"></script>
 <script src="/harness-preferences.js"></script>
 <script>
 window.__HERMES_HARNESS__={csrfToken:""};
@@ -48,10 +49,7 @@ window.__HERMES_HARNESS__={csrfToken:""};
       <span id="connectionLabel" data-i18n="connecting">Connecting</span>
       <label class="topbar-select" for="localeSelect">
         <span class="sr-only" data-i18n="language">Language</span>
-        <select id="localeSelect" aria-label="Language">
-          <option value="en">EN</option>
-          <option value="fr">FR</option>
-        </select>
+        <select id="localeSelect" aria-label="Language"></select>
       </label>
       <button class="icon-btn topbar-icon" id="themeToggle" type="button" aria-label="Theme">☀</button>
       <button class="ghost" id="refreshAllBtn" type="button" data-i18n="refresh">Refresh</button>
@@ -68,7 +66,7 @@ window.__HERMES_HARNESS__={csrfToken:""};
         <div class="rail-actions">
           <button class="icon-btn subtle-icon" id="showArchivedSessionsBtn" type="button" data-i18n-title="showArchivedSessions">◎</button>
           <button class="icon-btn subtle-icon" id="archiveSessionBtn" type="button" data-i18n-title="archiveSession">↧</button>
-          <button class="icon-btn" id="newSessionBtn" type="button" title="Create session">+</button>
+          <button class="icon-btn" id="newSessionBtn" type="button" data-i18n-title="createSession">+</button>
           <button class="icon-btn collapse-btn" type="button" data-collapse-rail="sessions" data-i18n-title="collapsePanel">‹</button>
         </div>
       </div>
@@ -164,12 +162,29 @@ window.__HERMES_HARNESS__={csrfToken:""};
   </main>
 </div>
 
+<dialog id="sessionDialog">
+  <form method="dialog" id="sessionForm">
+    <div class="dialog-head"><h2 data-i18n="createSession">Create Hermes session</h2><button type="button" data-dialog-close class="icon-btn">×</button></div>
+    <label>
+      <span data-i18n="sessionName">Session name</span>
+      <input name="title" id="sessionTitleInput" maxlength="160" data-i18n-placeholder="sessionNamePlaceholder" placeholder="research-session">
+      <small class="field-help" data-i18n="sessionNameOptional">Optional. Leave blank to let Hermes generate the session name automatically.</small>
+    </label>
+    <div class="dialog-actions"><button type="button" data-dialog-close class="ghost" data-i18n="cancel">Cancel</button><button type="submit" class="primary" data-i18n="create">Create</button></div>
+  </form>
+</dialog>
+
 <dialog id="workerDialog">
   <form method="dialog" id="workerForm">
     <div class="dialog-head"><h2 data-i18n="createWorker">Create durable worker</h2><button type="button" data-dialog-close class="icon-btn">×</button></div>
     <label><span data-i18n="label">Label</span><input name="label" maxlength="160" required placeholder="research-worker"></label>
     <label><span data-i18n="role">Role</span><select name="role"><option value="leaf" data-i18n="leaf">Leaf</option><option value="orchestrator" data-i18n="orchestrator">Orchestrator</option></select></label>
-    <label><span data-i18n="model">Model</span><input name="model" list="modelOptions" maxlength="512" placeholder="deepseek-v4-flash:0731"><small class="field-help" data-i18n="modelHelp">Choose an advertised model or type an explicit model id.</small></label>
+    <label>
+      <span data-i18n="model">Model</span>
+      <select name="model_choice" id="workerModelSelect"></select>
+      <input name="model_custom" id="workerCustomModelInput" class="hidden" maxlength="512" data-i18n-placeholder="customModelId" placeholder="Custom model id">
+      <small class="field-help" id="workerModelHelp" data-i18n="modelHelp">Choose a model available from the active provider, or select a custom model id.</small>
+    </label>
     <label><span data-i18n="toolsets">Toolsets</span><input name="toolsets" placeholder="terminal, web"></label>
     <div class="dialog-actions"><button type="button" data-dialog-close class="ghost" data-i18n="cancel">Cancel</button><button type="submit" class="primary" id="createWorkerSubmit" data-i18n="create">Create</button></div>
   </form>
@@ -179,7 +194,12 @@ window.__HERMES_HARNESS__={csrfToken:""};
   <form method="dialog" id="workerSettingsForm">
     <div class="dialog-head"><h2 data-i18n="editWorker">Worker settings</h2><button type="button" data-dialog-close class="icon-btn">×</button></div>
     <label><span data-i18n="label">Label</span><input name="label" id="workerSettingsLabel" maxlength="160" required></label>
-    <label><span data-i18n="model">Model</span><input name="model" id="workerSettingsModel" list="modelOptions" maxlength="512"><small class="field-help" data-i18n="modelHelp">Choose an advertised model or type an explicit model id.</small></label>
+    <label>
+      <span data-i18n="model">Model</span>
+      <select name="model_choice" id="workerSettingsModelSelect"></select>
+      <input name="model_custom" id="workerSettingsCustomModelInput" class="hidden" maxlength="512" data-i18n-placeholder="customModelId" placeholder="Custom model id">
+      <small class="field-help" id="workerSettingsModelHelp" data-i18n="modelHelp">Choose a model available from the active provider, or select a custom model id.</small>
+    </label>
     <label><span data-i18n="toolsets">Toolsets</span><input name="toolsets" id="workerSettingsToolsets"></label>
     <div class="danger-zone">
       <button type="button" class="ghost danger-action" id="archiveWorkerBtn" data-i18n="archiveWorker">Archive worker</button>
@@ -199,7 +219,6 @@ window.__HERMES_HARNESS__={csrfToken:""};
   </form>
 </dialog>
 
-<datalist id="modelOptions"></datalist>
 <div id="toast" class="toast hidden" role="status"></div>
 </body>
 </html>
