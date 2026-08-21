@@ -123,7 +123,11 @@ function h63RefreshCatalogFromKnownWorkers() {
   if (!state.h63ModelOptionsPayload) return;
   const next = h63CatalogFromPayload(state.h63ModelOptionsPayload);
   const current = state.h62ModelCatalog || {};
-  if (next.provider !== current.provider || next.models.join("\n") !== (current.models || []).join("\n")) {
+  if (
+    next.provider !== current.provider ||
+    next.currentModel !== current.currentModel ||
+    next.models.join("\n") !== (current.models || []).join("\n")
+  ) {
     h63ApplyModelCatalog(next);
   }
 }
@@ -177,7 +181,10 @@ function h63ObserveTaskGraph() {
   const root = $("taskList");
   if (!root || root.__h63Observer) return;
   const observer = new MutationObserver(() => requestAnimationFrame(h63NormalizeDag));
-  observer.observe(root, { childList: true, subtree: true });
+  // H5 replaces taskList's direct child whenever the graph is re-rendered.
+  // Watching only direct children avoids observing SVG edge redraws, which
+  // would otherwise feed back into h5DrawEdges and create an observer loop.
+  observer.observe(root, { childList: true });
   root.__h63Observer = observer;
 }
 
