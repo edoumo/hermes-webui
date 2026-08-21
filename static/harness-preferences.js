@@ -14,256 +14,9 @@
     showArchivedWorkers: PREFIX + "showArchivedWorkers",
   };
 
-  const MESSAGES = {
-    en: {
-      brandSubtitle: "Durable worker control plane",
-      connecting: "Connecting",
-      refresh: "Refresh",
-      scope: "Scope",
-      sessions: "Sessions",
-      workersEyebrow: "Durable identities",
-      workers: "Workers",
-      durableVisible: "Durable work, visible.",
-      selectWorkerHelp: "Select a Hermes session and a worker to inspect its durable transcript, activations and task graph.",
-      runNext: "Run next",
-      workerSettings: "Worker settings",
-      newDurableMessage: "New durable message",
-      messagePlaceholder: "Give this worker its next mandate…",
-      idempotencyPlaceholder: "Optional idempotency key",
-      queueMessage: "Queue message",
-      boundedHistory: "Bounded history",
-      messages: "Messages",
-      runtimeInstances: "Runtime instances",
-      activations: "Activations",
-      latest50: "latest 50",
-      dependencyGraph: "Dependency graph",
-      tasks: "Tasks",
-      newTask: "New task",
-      createWorker: "Create durable worker",
-      editWorker: "Worker settings",
-      label: "Label",
-      role: "Role",
-      leaf: "Leaf",
-      orchestrator: "Orchestrator",
-      model: "Model",
-      gatewayDefault: "Gateway default",
-      modelHelp: "Choose an advertised model or type an explicit model id.",
-      toolsets: "Toolsets",
-      cancel: "Cancel",
-      create: "Create",
-      save: "Save",
-      archiveWorker: "Archive worker",
-      restoreWorker: "Restore worker",
-      archiveWorkerConfirm: "Archive this worker? Its durable history will be preserved and the worker can be restored later.",
-      archiveSession: "Archive selected session",
-      archiveSessionConfirm: "Archive this session from the Harness list? This only hides it in this browser; Hermes session data is not deleted.",
-      showArchivedSessions: "Show archived sessions",
-      hideArchivedSessions: "Hide archived sessions",
-      showArchivedWorkers: "Show archived workers",
-      hideArchivedWorkers: "Hide archived workers",
-      restoreSession: "Restore session",
-      collapsePanel: "Collapse panel",
-      expandPanel: "Expand panel",
-      themeLight: "Use light theme",
-      themeDark: "Use dark theme",
-      language: "Language",
-      createTask: "Create task",
-      subject: "Subject",
-      description: "Description",
-      assignWorker: "Assign worker",
-      unassigned: "Unassigned",
-      noSessions: "No Hermes API sessions yet.",
-      noWorkers: "No durable workers in this session.",
-      selectSession: "Select a session.",
-      noMessages: "No durable messages.",
-      noActivations: "No activations yet.",
-      noTasks: "No tasks for this session.",
-      apiConnected: "Hermes API connected",
-      apiUnavailable: "Hermes API unavailable",
-      eventsIdle: "events idle",
-      eventsConnecting: "events connecting",
-      eventsLive: "events live",
-      eventsReconnecting: "events reconnecting",
-      workerCount: "{count} worker{suffix}",
-      messageEmpty: "Message is empty",
-      messageQueued: "Message queued durably",
-      sessionCreated: "Hermes API session created",
-      workerCreated: "Durable worker created",
-      workerUpdated: "Worker settings saved",
-      workerArchived: "Worker archived",
-      workerRestored: "Worker restored",
-      taskCreated: "Task created",
-      activationStarted: "Activation {id}",
-      stage: "Stage {number}",
-      ready: "READY",
-      blocked: "BLOCKED",
-      running: "RUNNING",
-      completed: "COMPLETED",
-      failed: "FAILED",
-      cancelled: "CANCELLED",
-      dormant: "DORMANT",
-      disabled: "ARCHIVED",
-      edit: "Edit",
-      dispatch: "Dispatch",
-      completeBlockers: "Complete blockers first",
-      assignWorkerFirst: "Assign a worker first",
-      workerNotDormant: "Worker is not dormant",
-      dispatchReady: "Dispatch ready task",
-      taskUpdated: "Task updated",
-      addDependency: "Add dependency…",
-      add: "Add",
-      blockedBy: "Blocked by",
-      none: "none",
-      worker: "Worker",
-      resetPending: "Reset to pending",
-      recoverTask: "Recover task",
-      recoverTaskTitle: "Restore the failed task, its worker and durable message for redispatch",
-      graphSummary: "{ready} ready · {blocked} blocked · {running} running · {done} done",
-      graphTruncated: "Graph truncated to 100 tasks.",
-      taskDispatched: "Task dispatched as {id}",
-      taskRecoveryReady: "Task recovery ready ({id})",
-      retryFailed: "Retry failed",
-      cancelActivation: "Cancel activation",
-      cancellationRequested: "Cancellation requested",
-      opsIdle: "ops idle",
-      opsUnavailable: "ops unavailable",
-      opsSummary: "session active {active} · failed {failed} · cap {cap}",
-      workerRetryReady: "Worker ready to retry ({id})",
-      cancelActivationConfirm: "Cancel activation {id}? The durable message will only be requeued after the child is confirmed cancelled.",
-      cancellationWaiting: "Cancellation requested; waiting for terminal child state",
-      cancellationAcknowledged: "Cancellation acknowledged",
-      showArchived: "Show archived",
-      archive: "Archive",
-      restore: "Restore",
-      noDescription: "No description",
-      readyDescription: "Ready",
-      removeDependency: "Remove dependency",
-    },
-    fr: {
-      brandSubtitle: "Plan de contrôle des workers durables",
-      connecting: "Connexion…",
-      refresh: "Actualiser",
-      scope: "Périmètre",
-      sessions: "Sessions",
-      workersEyebrow: "Identités durables",
-      workers: "Workers",
-      durableVisible: "Le travail durable, visible.",
-      selectWorkerHelp: "Sélectionnez une session Hermes et un worker pour consulter son historique durable, ses activations et son graphe de tâches.",
-      runNext: "Exécuter la suivante",
-      workerSettings: "Paramètres du worker",
-      newDurableMessage: "Nouveau message durable",
-      messagePlaceholder: "Donnez à ce worker son prochain mandat…",
-      idempotencyPlaceholder: "Clé d’idempotence facultative",
-      queueMessage: "Mettre en file",
-      boundedHistory: "Historique borné",
-      messages: "Messages",
-      runtimeInstances: "Instances d’exécution",
-      activations: "Activations",
-      latest50: "50 derniers",
-      dependencyGraph: "Graphe de dépendances",
-      tasks: "Tâches",
-      newTask: "Nouvelle tâche",
-      createWorker: "Créer un worker durable",
-      editWorker: "Paramètres du worker",
-      label: "Nom",
-      role: "Rôle",
-      leaf: "Feuille",
-      orchestrator: "Orchestrateur",
-      model: "Modèle",
-      gatewayDefault: "Modèle par défaut de la passerelle",
-      modelHelp: "Choisissez un modèle annoncé ou saisissez directement son identifiant.",
-      toolsets: "Jeux d’outils",
-      cancel: "Annuler",
-      create: "Créer",
-      save: "Enregistrer",
-      archiveWorker: "Archiver le worker",
-      restoreWorker: "Restaurer le worker",
-      archiveWorkerConfirm: "Archiver ce worker ? Son historique durable sera conservé et il pourra être restauré plus tard.",
-      archiveSession: "Archiver la session sélectionnée",
-      archiveSessionConfirm: "Archiver cette session dans la liste Harness ? Elle sera seulement masquée dans ce navigateur ; les données Hermes ne seront pas supprimées.",
-      showArchivedSessions: "Afficher les sessions archivées",
-      hideArchivedSessions: "Masquer les sessions archivées",
-      showArchivedWorkers: "Afficher les workers archivés",
-      hideArchivedWorkers: "Masquer les workers archivés",
-      restoreSession: "Restaurer la session",
-      collapsePanel: "Rabattre le volet",
-      expandPanel: "Déplier le volet",
-      themeLight: "Utiliser le thème clair",
-      themeDark: "Utiliser le thème sombre",
-      language: "Langue",
-      createTask: "Créer une tâche",
-      subject: "Sujet",
-      description: "Description",
-      assignWorker: "Affecter un worker",
-      unassigned: "Non affectée",
-      noSessions: "Aucune session Hermes API pour le moment.",
-      noWorkers: "Aucun worker durable dans cette session.",
-      selectSession: "Sélectionnez une session.",
-      noMessages: "Aucun message durable.",
-      noActivations: "Aucune activation pour le moment.",
-      noTasks: "Aucune tâche dans cette session.",
-      apiConnected: "Hermes API connecté",
-      apiUnavailable: "Hermes API indisponible",
-      eventsIdle: "événements inactifs",
-      eventsConnecting: "connexion aux événements",
-      eventsLive: "événements en direct",
-      eventsReconnecting: "reconnexion aux événements",
-      workerCount: "{count} worker{suffix}",
-      messageEmpty: "Le message est vide",
-      messageQueued: "Message mis en file durablement",
-      sessionCreated: "Session Hermes API créée",
-      workerCreated: "Worker durable créé",
-      workerUpdated: "Paramètres du worker enregistrés",
-      workerArchived: "Worker archivé",
-      workerRestored: "Worker restauré",
-      taskCreated: "Tâche créée",
-      activationStarted: "Activation {id}",
-      stage: "Étape {number}",
-      ready: "PRÊTE",
-      blocked: "BLOQUÉE",
-      running: "EN COURS",
-      completed: "TERMINÉE",
-      failed: "ÉCHEC",
-      cancelled: "ANNULÉE",
-      dormant: "EN VEILLE",
-      disabled: "ARCHIVÉ",
-      edit: "Modifier",
-      dispatch: "Lancer",
-      completeBlockers: "Terminez d’abord les tâches bloquantes",
-      assignWorkerFirst: "Affectez d’abord un worker",
-      workerNotDormant: "Le worker n’est pas en veille",
-      dispatchReady: "Lancer la tâche prête",
-      taskUpdated: "Tâche mise à jour",
-      addDependency: "Ajouter une dépendance…",
-      add: "Ajouter",
-      blockedBy: "Bloquée par",
-      none: "aucune",
-      worker: "Worker",
-      resetPending: "Remettre en attente",
-      recoverTask: "Récupérer la tâche",
-      recoverTaskTitle: "Restaurer la tâche en échec, son worker et son message durable pour la relancer",
-      graphSummary: "{ready} prêtes · {blocked} bloquées · {running} en cours · {done} terminées",
-      graphTruncated: "Graphe limité aux 100 premières tâches.",
-      taskDispatched: "Tâche lancée via {id}",
-      taskRecoveryReady: "Tâche prête à être récupérée ({id})",
-      retryFailed: "Réessayer après échec",
-      cancelActivation: "Annuler l’activation",
-      cancellationRequested: "Annulation demandée",
-      opsIdle: "opérations inactives",
-      opsUnavailable: "opérations indisponibles",
-      opsSummary: "session actives {active} · échecs {failed} · capacité {cap}",
-      workerRetryReady: "Worker prêt à réessayer ({id})",
-      cancelActivationConfirm: "Annuler l’activation {id} ? Le message durable ne sera remis en file qu’après confirmation de l’arrêt du child.",
-      cancellationWaiting: "Annulation demandée ; attente de l’état terminal du child",
-      cancellationAcknowledged: "Annulation prise en compte",
-      showArchived: "Afficher les archivés",
-      archive: "Archiver",
-      restore: "Restaurer",
-      noDescription: "Aucune description",
-      readyDescription: "Prête",
-      removeDependency: "Supprimer la dépendance",
-    },
-  };
+  const LOCALES = window.HermesHarnessLocales || {};
+  const FALLBACK_LOCALE = Object.prototype.hasOwnProperty.call(LOCALES, "en") ? "en" : Object.keys(LOCALES)[0];
+  if (!FALLBACK_LOCALE) throw new Error("Hermes Harness locale catalog is empty");
 
   function storageGet(key, fallback = null) {
     try {
@@ -289,15 +42,38 @@
     }
   }
 
-  let locale = storageGet(KEYS.locale, "");
-  if (!MESSAGES[locale]) {
-    locale = String(navigator.language || "en").toLowerCase().startsWith("fr") ? "fr" : "en";
+  function normalizeLocale(value) {
+    const text = String(value || "").trim().toLowerCase().replace(/_/g, "-");
+    if (!text) return "";
+    if (LOCALES[text]) return text;
+    const base = text.split("-", 1)[0];
+    return LOCALES[base] ? base : "";
   }
+
+  function browserLocale() {
+    const requested = [
+      ...(Array.isArray(navigator.languages) ? navigator.languages : []),
+      navigator.language,
+    ];
+    for (const candidate of requested) {
+      const normalized = normalizeLocale(candidate);
+      if (normalized) return normalized;
+    }
+    return FALLBACK_LOCALE;
+  }
+
+  let locale = normalizeLocale(storageGet(KEYS.locale, "")) || browserLocale();
   let theme = storageGet(KEYS.theme, "dark");
   if (!new Set(["dark", "light"]).has(theme)) theme = "dark";
 
+  function messagesFor(code) {
+    return LOCALES[code]?.messages || LOCALES[FALLBACK_LOCALE]?.messages || {};
+  }
+
   function t(key, vars = {}) {
-    const template = MESSAGES[locale]?.[key] ?? MESSAGES.en[key] ?? key;
+    const active = messagesFor(locale);
+    const fallback = messagesFor(FALLBACK_LOCALE);
+    const template = active[key] ?? fallback[key] ?? key;
     return String(template).replace(/\{([A-Za-z0-9_]+)\}/g, (_m, name) =>
       Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : `{${name}}`
     );
@@ -325,6 +101,17 @@
     window.dispatchEvent(new CustomEvent("hermes-harness-ui-change", { detail: { kind } }));
   }
 
+  function populateLocaleSelect() {
+    const selector = document.getElementById("localeSelect");
+    if (!selector) return;
+    const previous = selector.value;
+    selector.replaceChildren();
+    for (const [code, definition] of Object.entries(LOCALES)) {
+      selector.add(new Option(definition?.label || code.toUpperCase(), code));
+    }
+    selector.value = LOCALES[locale] ? locale : (LOCALES[previous] ? previous : FALLBACK_LOCALE);
+  }
+
   function applyTheme() {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
@@ -344,8 +131,9 @@
   }
 
   function setLocale(next) {
-    if (!MESSAGES[next]) return;
-    locale = next;
+    const normalized = normalizeLocale(next);
+    if (!normalized) return;
+    locale = normalized;
     storageSet(KEYS.locale, locale);
     applyStaticTranslations();
     applyTheme();
@@ -473,6 +261,7 @@
   }
 
   function init() {
+    populateLocaleSelect();
     applyStaticTranslations();
     applyTheme();
     applyRailPreferences();
@@ -492,6 +281,7 @@
     statusLabel,
     roleLabel,
     locale: () => locale,
+    locales: () => Object.keys(LOCALES),
     theme: () => theme,
     setLocale,
     setTheme,
