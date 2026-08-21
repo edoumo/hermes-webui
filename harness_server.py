@@ -32,7 +32,7 @@ from api.auth import (  # noqa: E402
     parse_cookie,
     reset_trusted_auth_request_state,
 )
-from api.harness_ui_operations import (  # noqa: E402
+from api.harness_ui_tasks import (  # noqa: E402
     handle_harness_request,
     harness_enabled,
     serve_harness_asset,
@@ -57,6 +57,7 @@ class HarnessHandler(Handler):
             "/harness.js",
             "/harness.css",
             "/harness-operations.js",
+            "/harness-tasks.js",
         } or path.startswith("/api/harness")
 
     def _begin_harness_request(self):
