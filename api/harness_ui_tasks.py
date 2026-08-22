@@ -12,7 +12,7 @@ from typing import Optional
 
 from api import harness_ui as foundation
 from api import harness_ui_operations as operations
-from api.helpers import j
+from harness_runtime.http import j
 
 _SAFE_ID = r"[A-Za-z0-9._:-]{1,256}"
 
