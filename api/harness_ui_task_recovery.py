@@ -44,10 +44,13 @@ _H61_WORKER_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ),
 )
 
-# Hermes' stock API already owns the rich provider/model inventory endpoint.
-# H6.2 only exposes it through the same server-side authenticated Harness BFF.
+# Hermes' stock API owns both the provider/model inventory and the auxiliary
+# slot projection. Harness only exposes those existing contracts through the
+# same server-side authenticated BFF; it does not maintain a second catalog.
 _H62_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("GET", re.compile(r"^/model-options$"), "/api/model/options"),
+    ("GET", re.compile(r"^/model-auxiliary$"), "/api/model/auxiliary"),
+    ("POST", re.compile(r"^/model-set$"), "/api/model/set"),
 )
 
 _H5_RECOVERY_BOOT = """s.onload=function(){
@@ -66,7 +69,12 @@ _H5_RECOVERY_BOOT = """s.onload=function(){
               var h63=document.createElement('script');
               h63.src='/harness-polish3.js';
               h63.onload=function(){
-                if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+                var hm=document.createElement('script');
+                hm.src='/harness-models.js';
+                hm.onload=function(){
+                  if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+                };
+                document.head.appendChild(hm);
               };
               document.head.appendChild(h63);
             };
@@ -165,6 +173,7 @@ def serve_harness_asset(handler, path: str) -> bool:
         "/harness-locales.js": "harness-locales.js",
         "/harness-polish2.js": "harness-polish2.js",
         "/harness-polish3.js": "harness-polish3.js",
+        "/harness-models.js": "harness-models.js",
     }
     if path in assets:
         return _serve_js_asset(handler, assets[path])
