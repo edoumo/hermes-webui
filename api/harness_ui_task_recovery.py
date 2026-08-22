@@ -82,7 +82,7 @@ _H5_RECOVERY_BOOT = """s.onload=function(){
           };
           document.head.appendChild(h5r);
         };
-        document.head.appendChild(h5);
+        document.head.appendChild(h4);
       };
       document.head.appendChild(h4);
     };"""
@@ -115,14 +115,14 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
         return False
     if upstream != inherited:
         proxy_parsed = parsed
+        proxy_upstream = upstream
         if parsed.query:
             # Keep this extension strict: the only accepted query is the
-            # model-options UI's explicit refresh=true hint. Harness does not
-            # need a generic query proxy. The current foundation BFF allowlist
-            # predates this hint, so consume it here and perform a fresh
-            # projection reload without widening the generic query surface.
+            # model-options UI's explicit refresh=true hint. Forward that exact
+            # flag to Hermes without widening the generic Harness query surface.
             if method == "GET" and parsed.path == "/api/harness/model-options" and parsed.query == "refresh=true":
                 proxy_parsed = parsed._replace(query="")
+                proxy_upstream = upstream + "?refresh=true"
             else:
                 j(
                     handler,
@@ -134,7 +134,7 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
             handler,
             proxy_parsed,
             method=method,
-            upstream_path=upstream,
+            upstream_path=proxy_upstream,
         )
     return tasks.handle_harness_request(handler, parsed, method=method)
 
