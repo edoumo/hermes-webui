@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from api import harness_ui as foundation
+from harness_runtime import bff as foundation
 from api import harness_ui_operations as operations
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,7 +65,8 @@ def test_h4_server_preserves_operations_bff_through_h5_layering():
     # operations layer rather than bypassing or duplicating it.
     assert "from api.harness_ui_task_recovery import" in harness_server
     assert "from api import harness_ui_operations as operations" in h5_recovery
-    assert '"/harness-operations.js"' in harness_server
+    assert '"/harness-operations.js"' in (ROOT / "api" / "harness_ui_operations.py").read_text(encoding="utf-8")
+    assert "serve_harness_asset(self, parsed.path)" in harness_server
     assert "harness_ui_operations" not in legacy_server
 
 
@@ -79,6 +80,7 @@ def test_h4_browser_asset_exposes_cancel_retry_without_backend_secrets():
     assert "CANCEL_REQUESTED" in source
     assert "window.confirm" in source
 
+    assert "HERMES_HARNESS_GATEWAY_API_KEY" not in source
     assert "HERMES_WEBUI_GATEWAY_API_KEY" not in source
     assert "API_SERVER_KEY" not in source
     assert "Authorization" not in source
