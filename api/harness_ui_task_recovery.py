@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from api import harness_ui as foundation
+from harness_runtime import bff as foundation
 from api import harness_ui_operations as operations
 from api import harness_ui_tasks as tasks
 from harness_runtime.http import j
@@ -14,39 +14,18 @@ _SAFE_ID = r"[A-Za-z0-9._:-]{1,256}"
 
 _RECOVERY_ROUTE = (
     "POST",
-    re.compile(
-        rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/recover$"
-    ),
+    re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/recover$"),
     "/api/sessions/{session_id}/worker-tasks/{task_id}/recover",
 )
 
 _H61_WORKER_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
-    (
-        "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/edit$"
-        ),
-        "/api/sessions/{session_id}/workers/{worker_id}/edit",
-    ),
-    (
-        "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/archive$"
-        ),
-        "/api/sessions/{session_id}/workers/{worker_id}/archive",
-    ),
-    (
-        "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/restore$"
-        ),
-        "/api/sessions/{session_id}/workers/{worker_id}/restore",
-    ),
+    ("POST", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/edit$"), "/api/sessions/{session_id}/workers/{worker_id}/edit"),
+    ("POST", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/archive$"), "/api/sessions/{session_id}/workers/{worker_id}/archive"),
+    ("POST", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/restore$"), "/api/sessions/{session_id}/workers/{worker_id}/restore"),
 )
 
-# Hermes' stock API owns both the provider/model inventory and the auxiliary
-# slot projection. Harness only exposes those existing contracts through the
-# same server-side authenticated BFF; it does not maintain a second catalog.
+# Hermes owns the model inventory and assignment persistence. Harness only
+# exposes these existing contracts through the authenticated BFF.
 _H62_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("GET", re.compile(r"^/model-options$"), "/api/model/options"),
     ("GET", re.compile(r"^/model-auxiliary$"), "/api/model/auxiliary"),
@@ -92,7 +71,7 @@ def resolve_upstream(method: str, browser_path: str) -> Optional[str]:
     method = str(method or "").upper()
     prefix = "/api/harness"
     if browser_path.startswith(prefix):
-        suffix = browser_path[len(prefix) :] or "/"
+        suffix = browser_path[len(prefix):] or "/"
         if method == _RECOVERY_ROUTE[0]:
             match = _RECOVERY_ROUTE[1].fullmatch(suffix)
             if match:
@@ -117,25 +96,14 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
         proxy_parsed = parsed
         proxy_upstream = upstream
         if parsed.query:
-            # Keep this extension strict: the only accepted query is the
-            # model-options UI's explicit refresh=true hint. Forward that exact
-            # flag to Hermes without widening the generic Harness query surface.
+            # Explicitly permit only the model picker refresh hint.
             if method == "GET" and parsed.path == "/api/harness/model-options" and parsed.query == "refresh=true":
                 proxy_parsed = parsed._replace(query="")
                 proxy_upstream = upstream + "?refresh=true"
             else:
-                j(
-                    handler,
-                    {"error": "Harness operator/catalog routes do not accept query parameters"},
-                    status=400,
-                )
+                j(handler, {"error": "Harness operator/catalog routes do not accept query parameters"}, status=400)
                 return True
-        return foundation._proxy_json(
-            handler,
-            proxy_parsed,
-            method=method,
-            upstream_path=proxy_upstream,
-        )
+        return foundation._proxy_json(handler, proxy_parsed, method=method, upstream_path=proxy_upstream)
     return tasks.handle_harness_request(handler, parsed, method=method)
 
 
@@ -191,10 +159,4 @@ def serve_harness_asset(handler, path: str) -> bool:
 
 harness_enabled = foundation.harness_enabled
 
-
-__all__ = [
-    "handle_harness_request",
-    "harness_enabled",
-    "resolve_upstream",
-    "serve_harness_asset",
-]
+__all__ = ["handle_harness_request", "harness_enabled", "resolve_upstream", "serve_harness_asset"]
