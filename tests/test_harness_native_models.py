@@ -60,12 +60,13 @@ def test_models_panel_uses_hermes_as_single_source_of_truth():
 
 def test_models_asset_is_loaded_after_existing_h6_stack():
     recovery_source = (ROOT / "api" / "harness_ui_task_recovery.py").read_text(encoding="utf-8")
-    server_source = (ROOT / "harness_server.py").read_text(encoding="utf-8")
 
     assert "h63.src='/harness-polish3.js'" in recovery_source
     assert "hm.src='/harness-models.js'" in recovery_source
     assert recovery_source.index("h63.src='/harness-polish3.js'") < recovery_source.index("hm.src='/harness-models.js'")
-    assert '"/harness-models.js"' in server_source
+    # Asset ownership lives in the H6 recovery/static layer; the standalone
+    # HTTP server delegates static resolution instead of duplicating paths.
+    assert '"/harness-models.js": "harness-models.js"' in recovery_source
 
 
 def test_existing_harness_archive_remains_browser_local_masking():
