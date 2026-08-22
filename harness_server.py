@@ -66,6 +66,7 @@ class HarnessHandler(Handler):
             "/harness-task-recovery.js",
             "/harness-polish2.js",
             "/harness-polish3.js",
+            "/harness-models.js",
         } or path.startswith("/api/harness")
 
     def _begin_harness_request(self):
