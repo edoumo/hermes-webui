@@ -8,7 +8,7 @@ from typing import Optional
 from api import harness_ui as foundation
 from api import harness_ui_operations as operations
 from api import harness_ui_tasks as tasks
-from api.helpers import j
+from harness_runtime.http import j
 
 _SAFE_ID = r"[A-Za-z0-9._:-]{1,256}"
 
@@ -82,7 +82,7 @@ _H5_RECOVERY_BOOT = """s.onload=function(){
           };
           document.head.appendChild(h5r);
         };
-        document.head.appendChild(h4);
+        document.head.appendChild(h5);
       };
       document.head.appendChild(h4);
     };"""
