@@ -114,16 +114,25 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
     if upstream is None:
         return False
     if upstream != inherited:
+        proxy_parsed = parsed
         if parsed.query:
-            j(
-                handler,
-                {"error": "Harness operator/catalog routes do not accept query parameters"},
-                status=400,
-            )
-            return True
+            # Keep this extension strict: the only accepted query is the
+            # model-options UI's explicit refresh=true hint. Harness does not
+            # need a generic query proxy. The current foundation BFF allowlist
+            # predates this hint, so consume it here and perform a fresh
+            # projection reload without widening the generic query surface.
+            if method == "GET" and parsed.path == "/api/harness/model-options" and parsed.query == "refresh=true":
+                proxy_parsed = parsed._replace(query="")
+            else:
+                j(
+                    handler,
+                    {"error": "Harness operator/catalog routes do not accept query parameters"},
+                    status=400,
+                )
+                return True
         return foundation._proxy_json(
             handler,
-            parsed,
+            proxy_parsed,
             method=method,
             upstream_path=upstream,
         )
