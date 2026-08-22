@@ -40,20 +40,35 @@ def test_harness_browser_assets_do_not_embed_backend_secret_names():
             "harness-tasks.js",
             "harness-task-recovery.js",
             "harness-polish2.js",
+            "harness-polish3.js",
+            "harness-models.js",
             "harness.css",
         )
     )
+    assert "HERMES_HARNESS_GATEWAY_API_KEY" not in assets
     assert "HERMES_WEBUI_GATEWAY_API_KEY" not in assets
     assert "API_SERVER_KEY" not in assets
     assert "Authorization: Bearer" not in assets
 
 
-def test_harness_remains_a_separate_entrypoint():
+def test_harness_remains_a_separate_standalone_entrypoint():
     legacy = (ROOT / "server.py").read_text(encoding="utf-8")
     harness = (ROOT / "harness_server.py").read_text(encoding="utf-8")
-    bind_policy = (ROOT / "api" / "harness_ui_bind.py").read_text(encoding="utf-8")
+    runtime_auth = (ROOT / "harness_runtime" / "auth.py").read_text(encoding="utf-8")
+    runtime_bff = (ROOT / "harness_runtime" / "bff.py").read_text(encoding="utf-8")
+
     assert "HarnessHandler" not in legacy
-    assert "QuietHTTPServer" in harness
-    assert "resolve_harness_bind" in harness
-    assert "HERMES_HARNESS_PORT" in bind_policy
-    assert "HERMES_WEBUI_STATE_DIR" in harness
+    assert "ThreadingHTTPServer" in harness
+    assert "resolve_bind" in harness
+    assert "HERMES_HARNESS_PORT" in harness
+    assert "HERMES_HARNESS_STATE_DIR" in runtime_auth
+    assert "HERMES_HARNESS_GATEWAY_BASE_URL" in runtime_bff
+
+    for forbidden in (
+        "from api.auth import",
+        "from api.helpers import",
+        "from api.profiles import",
+        "from api.routes import",
+        "from server import",
+    ):
+        assert forbidden not in harness

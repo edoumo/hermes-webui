@@ -76,12 +76,15 @@ def test_h5_shell_loads_h3_h4_h5_recovery_then_boot():
 
 def test_h5_server_uses_recovery_bff_and_serves_all_task_assets():
     server = (ROOT / "harness_server.py").read_text(encoding="utf-8")
+    recovery_source = (ROOT / "api" / "harness_ui_task_recovery.py").read_text(encoding="utf-8")
+    tasks_source = (ROOT / "api" / "harness_ui_tasks.py").read_text(encoding="utf-8")
     legacy = (ROOT / "server.py").read_text(encoding="utf-8")
 
     assert "from api.harness_ui_task_recovery import" in server
-    assert '"/harness-preferences.js"' in server
-    assert '"/harness-tasks.js"' in server
-    assert '"/harness-task-recovery.js"' in server
+    assert "serve_harness_asset(self, parsed.path)" in server
+    assert '"/harness-preferences.js"' in recovery_source
+    assert '"/harness-task-recovery.js"' in recovery_source
+    assert '"/harness-tasks.js"' in tasks_source
     assert "harness_ui_task_recovery" not in legacy
 
 
@@ -108,6 +111,7 @@ def test_h5_browser_assets_have_dag_recovery_without_eventsource_or_secrets():
     assert "Authorization" not in combined
     assert "Bearer " not in combined
     assert "API_SERVER_KEY" not in combined
+    assert "HERMES_HARNESS_GATEWAY_API_KEY" not in combined
     assert "HERMES_WEBUI_GATEWAY_API_KEY" not in combined
     assert "localStorage" not in combined
 

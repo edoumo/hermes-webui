@@ -1,8 +1,8 @@
 """H5 task-orchestration extension for the qualified H4 Harness BFF.
 
 H5 adds only task graph/edit/dispatch routes and one local browser asset. H4
-continues to own operational worker controls and H3 continues to own auth, SSE,
-session selection and the foundational browser state.
+continues to own operational worker controls and the Harness BFF foundation
+continues to own SSE/session proxying.
 """
 from __future__ import annotations
 
@@ -10,46 +10,18 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from api import harness_ui as foundation
+from harness_runtime import bff as foundation
 from api import harness_ui_operations as operations
-from api.helpers import j
+from harness_runtime.http import j
 
 _SAFE_ID = r"[A-Za-z0-9._:-]{1,256}"
 
 _H5_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
-    (
-        "GET",
-        re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-task-graph$"),
-        "/api/sessions/{session_id}/worker-task-graph",
-    ),
-    (
-        "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/edit$"
-        ),
-        "/api/sessions/{session_id}/worker-tasks/{task_id}/edit",
-    ),
-    (
-        "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/dependencies/add$"
-        ),
-        "/api/sessions/{session_id}/worker-tasks/{task_id}/dependencies/add",
-    ),
-    (
-        "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/dependencies/remove$"
-        ),
-        "/api/sessions/{session_id}/worker-tasks/{task_id}/dependencies/remove",
-    ),
-    (
-        "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/dispatch$"
-        ),
-        "/api/sessions/{session_id}/worker-tasks/{task_id}/dispatch",
-    ),
+    ("GET", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-task-graph$"), "/api/sessions/{session_id}/worker-task-graph"),
+    ("POST", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/edit$"), "/api/sessions/{session_id}/worker-tasks/{task_id}/edit"),
+    ("POST", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/dependencies/add$"), "/api/sessions/{session_id}/worker-tasks/{task_id}/dependencies/add"),
+    ("POST", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/dependencies/remove$"), "/api/sessions/{session_id}/worker-tasks/{task_id}/dependencies/remove"),
+    ("POST", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/dispatch$"), "/api/sessions/{session_id}/worker-tasks/{task_id}/dispatch"),
 )
 
 _H5_BOOT = """s.onload=function(){
@@ -71,7 +43,7 @@ def resolve_upstream(method: str, browser_path: str) -> Optional[str]:
     method = str(method or "").upper()
     prefix = "/api/harness"
     if browser_path.startswith(prefix):
-        suffix = browser_path[len(prefix) :] or "/"
+        suffix = browser_path[len(prefix):] or "/"
         for route_method, pattern, template in _H5_ROUTES:
             if route_method != method:
                 continue
@@ -90,18 +62,9 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
         return False
     if upstream != inherited:
         if method != "GET" and parsed.query:
-            j(
-                handler,
-                {"error": "H5 Harness task control routes do not accept query parameters"},
-                status=400,
-            )
+            j(handler, {"error": "H5 Harness task control routes do not accept query parameters"}, status=400)
             return True
-        return foundation._proxy_json(
-            handler,
-            parsed,
-            method=method,
-            upstream_path=upstream,
-        )
+        return foundation._proxy_json(handler, parsed, method=method, upstream_path=upstream)
     return operations.handle_harness_request(handler, parsed, method=method)
 
 
@@ -145,10 +108,4 @@ def serve_harness_asset(handler, path: str) -> bool:
 
 harness_enabled = foundation.harness_enabled
 
-
-__all__ = [
-    "handle_harness_request",
-    "harness_enabled",
-    "resolve_upstream",
-    "serve_harness_asset",
-]
+__all__ = ["handle_harness_request", "harness_enabled", "resolve_upstream", "serve_harness_asset"]

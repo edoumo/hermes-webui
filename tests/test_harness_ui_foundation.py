@@ -1,25 +1,29 @@
-"""Contract tests for the experimental Hermes Harness UI foundation."""
+"""Contract tests for the Hermes Harness standalone BFF foundation."""
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-import api.harness_ui as harness
-from api.harness_ui_bind import resolve_harness_bind
+from harness_runtime import bff as harness
+import harness_server
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_harness_is_default_off_and_explicit_opt_in():
-    assert harness.harness_enabled({}) is False
+def test_harness_is_enabled_by_standalone_entrypoint_and_can_be_disabled_explicitly():
+    assert harness.harness_enabled({}) is True
     for value in ("1", "true", "yes", "on"):
-        assert harness.harness_enabled({"HERMES_WEBUI_HARNESS_UI": value}) is True
+        assert harness.harness_enabled({"HERMES_HARNESS_ENABLED": value}) is True
     for value in ("0", "false", "off", ""):
-        assert harness.harness_enabled({"HERMES_WEBUI_HARNESS_UI": value}) is False
+        assert harness.harness_enabled({"HERMES_HARNESS_ENABLED": value}) is False
+    # Historical flag remains a compatibility fallback during extraction.
+    assert harness.harness_enabled({"HERMES_WEBUI_HARNESS_UI": "1"}) is True
+    assert harness.harness_enabled({"HERMES_WEBUI_HARNESS_UI": "0"}) is False
 
 
 def test_bff_route_allowlist_is_exact_and_method_scoped():
@@ -54,17 +58,21 @@ def test_bff_route_allowlist_is_exact_and_method_scoped():
     assert harness.resolve_upstream("GET", f"/api/harness/sessions/{sid}/workers/{wid}/unknown") is None
 
 
-def test_gateway_origin_is_loopback_only_and_cannot_embed_credentials():
+def test_gateway_origin_is_loopback_only_by_default_and_cannot_embed_credentials():
     assert harness._gateway_base_url({}) == "http://127.0.0.1:8642"
-    assert harness._gateway_base_url({"HERMES_WEBUI_GATEWAY_BASE_URL": "http://localhost:9000"}) == "http://localhost:9000"
-    assert harness._gateway_base_url({"HERMES_WEBUI_GATEWAY_BASE_URL": "http://[::1]:8642"}) == "http://[::1]:8642"
+    assert harness._gateway_base_url({"HERMES_HARNESS_GATEWAY_BASE_URL": "http://localhost:9000"}) == "http://localhost:9000"
+    assert harness._gateway_base_url({"HERMES_HARNESS_GATEWAY_BASE_URL": "http://[::1]:8642"}) == "http://[::1]:8642"
 
     with pytest.raises(harness.HarnessConfigError):
-        harness._gateway_base_url({"HERMES_WEBUI_GATEWAY_BASE_URL": "https://example.com"})
+        harness._gateway_base_url({"HERMES_HARNESS_GATEWAY_BASE_URL": "https://example.com"})
+    assert harness._gateway_base_url({
+        "HERMES_HARNESS_GATEWAY_BASE_URL": "https://example.com",
+        "HERMES_HARNESS_ALLOW_REMOTE_API": "1",
+    }) == "https://example.com"
     with pytest.raises(harness.HarnessConfigError):
-        harness._gateway_base_url({"HERMES_WEBUI_GATEWAY_BASE_URL": "http://user:pass@127.0.0.1:8642"})
+        harness._gateway_base_url({"HERMES_HARNESS_GATEWAY_BASE_URL": "http://user:pass@127.0.0.1:8642"})
     with pytest.raises(harness.HarnessConfigError):
-        harness._gateway_base_url({"HERMES_WEBUI_GATEWAY_BASE_URL": "http://127.0.0.1:8642/api"})
+        harness._gateway_base_url({"HERMES_HARNESS_GATEWAY_BASE_URL": "http://127.0.0.1:8642/api"})
 
 
 def test_gateway_key_is_required_and_never_part_of_target_url():
@@ -82,8 +90,8 @@ def test_gateway_key_is_required_and_never_part_of_target_url():
         method="POST",
         upstream_path="/api/sessions",
         environ={
-            "HERMES_WEBUI_GATEWAY_BASE_URL": "http://127.0.0.1:8642",
-            "HERMES_WEBUI_GATEWAY_API_KEY": "super-secret-test-key",
+            "HERMES_HARNESS_GATEWAY_BASE_URL": "http://127.0.0.1:8642",
+            "HERMES_HARNESS_GATEWAY_API_KEY": "super-secret-test-key",
         },
     )
     assert request.full_url == "http://127.0.0.1:8642/api/sessions"
@@ -116,8 +124,10 @@ def test_static_client_contains_no_gateway_bearer_secret_surface():
         ROOT / "static" / "harness.html",
         ROOT / "static" / "harness.js",
         ROOT / "static" / "harness-preferences.js",
+        ROOT / "static" / "harness-models.js",
     ]
     combined = "\n".join(path.read_text(encoding="utf-8") for path in assets)
+    assert "HERMES_HARNESS_GATEWAY_API_KEY" not in combined
     assert "HERMES_WEBUI_GATEWAY_API_KEY" not in combined
     assert "Authorization" not in combined
     assert "Bearer " not in combined
@@ -138,32 +148,40 @@ def test_browser_projection_is_explicitly_bounded_and_event_driven():
     assert 'const PREFIX = "hermesHarness.ui."' in prefs
 
 
-def test_standalone_server_preserves_auth_csrf_and_guards_remote_bind():
+def test_standalone_server_preserves_auth_csrf_and_guards_remote_bind(monkeypatch):
     source = (ROOT / "harness_server.py").read_text(encoding="utf-8")
-    assert "check_auth(self, parsed)" in source
-    assert "_check_csrf(self)" in source
-    assert "csrf_token_for_session" in source
-    assert "HERMES_HARNESS_STATE_DIR" in source
-    assert 'HERMES_WEBUI_COOKIE_NAME", "hermes_harness_session"' in source
-    assert "resolve_harness_bind" in source
+    auth_source = (ROOT / "harness_runtime" / "auth.py").read_text(encoding="utf-8")
 
-    assert resolve_harness_bind({}) == ("127.0.0.1", 8790)
+    assert "from harness_runtime import auth" in source
+    assert "auth.check_csrf(self)" in source
+    assert "auth.csrf_token(cookie)" in source
+    assert "HERMES_HARNESS_PASSWORD" in source
+    assert "HERMES_HARNESS_STATE_DIR" in auth_source
+    assert "resolve_bind" in source
+
+    for key in (
+        "HERMES_HARNESS_HOST",
+        "HERMES_HARNESS_PORT",
+        "HERMES_HARNESS_ALLOW_REMOTE",
+        "HERMES_HARNESS_PASSWORD",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    assert harness_server.resolve_bind() == ("127.0.0.1", 8790)
+
+    monkeypatch.setenv("HERMES_HARNESS_HOST", "192.168.1.187")
     with pytest.raises(RuntimeError, match="HERMES_HARNESS_ALLOW_REMOTE"):
-        resolve_harness_bind({"HERMES_HARNESS_HOST": "192.168.1.187"})
-    with pytest.raises(RuntimeError, match="HERMES_WEBUI_PASSWORD"):
-        resolve_harness_bind({
-            "HERMES_HARNESS_HOST": "192.168.1.187",
-            "HERMES_HARNESS_ALLOW_REMOTE": "1",
-        })
-    assert resolve_harness_bind({
-        "HERMES_HARNESS_HOST": "192.168.1.187",
-        "HERMES_HARNESS_ALLOW_REMOTE": "1",
-        "HERMES_WEBUI_PASSWORD": "test-only-password",
-        "HERMES_HARNESS_PORT": "8794",
-    }) == ("192.168.1.187", 8794)
+        harness_server.resolve_bind()
+
+    monkeypatch.setenv("HERMES_HARNESS_ALLOW_REMOTE", "1")
+    with pytest.raises(RuntimeError, match="HERMES_HARNESS_PASSWORD"):
+        harness_server.resolve_bind()
+
+    monkeypatch.setenv("HERMES_HARNESS_PASSWORD", "test-only-password")
+    monkeypatch.setenv("HERMES_HARNESS_PORT", "8794")
+    assert harness_server.resolve_bind() == ("192.168.1.187", 8794)
 
 
 def test_harness_does_not_modify_legacy_server_entrypoint():
     server = (ROOT / "server.py").read_text(encoding="utf-8")
-    assert "api.harness_ui" not in server
+    assert "harness_runtime" not in server
     assert "HarnessHandler" not in server

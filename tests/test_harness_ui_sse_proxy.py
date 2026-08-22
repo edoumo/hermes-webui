@@ -1,10 +1,10 @@
-"""Regression tests for the Harness BFF SSE relay."""
+"""Regression tests for the Harness standalone BFF SSE relay."""
 from __future__ import annotations
 
 import io
 from types import SimpleNamespace
 
-import api.harness_ui as harness
+from harness_runtime import bff as harness
 
 
 class _FakeResponse:
@@ -69,8 +69,8 @@ def test_sse_proxy_relays_each_line_before_upstream_eof(monkeypatch):
     )
     opener = _FakeOpener(response)
     monkeypatch.setattr(harness, "_OPENER", opener)
-    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_BASE_URL", "http://127.0.0.1:53481")
-    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_API_KEY", "test-secret")
+    monkeypatch.setenv("HERMES_HARNESS_GATEWAY_BASE_URL", "http://127.0.0.1:53481")
+    monkeypatch.setenv("HERMES_HARNESS_GATEWAY_API_KEY", "test-secret")
 
     handler = _FakeHandler()
     parsed = SimpleNamespace(query="")
@@ -96,8 +96,8 @@ def test_sse_proxy_forwards_last_event_id(monkeypatch):
     response = _FakeResponse([ConnectionResetError("done")])
     opener = _FakeOpener(response)
     monkeypatch.setattr(harness, "_OPENER", opener)
-    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_BASE_URL", "http://127.0.0.1:53481")
-    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_API_KEY", "test-secret")
+    monkeypatch.setenv("HERMES_HARNESS_GATEWAY_BASE_URL", "http://127.0.0.1:53481")
+    monkeypatch.setenv("HERMES_HARNESS_GATEWAY_API_KEY", "test-secret")
 
     handler = _FakeHandler({"Last-Event-ID": token})
     parsed = SimpleNamespace(query="")

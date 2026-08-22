@@ -5,49 +5,31 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from api import harness_ui as foundation
+from harness_runtime import bff as foundation
 from api import harness_ui_operations as operations
 from api import harness_ui_tasks as tasks
-from api.helpers import j
+from harness_runtime.http import j
 
 _SAFE_ID = r"[A-Za-z0-9._:-]{1,256}"
 
 _RECOVERY_ROUTE = (
     "POST",
-    re.compile(
-        rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/recover$"
-    ),
+    re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/worker-tasks/(?P<task_id>{_SAFE_ID})/recover$"),
     "/api/sessions/{session_id}/worker-tasks/{task_id}/recover",
 )
 
 _H61_WORKER_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
-    (
-        "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/edit$"
-        ),
-        "/api/sessions/{session_id}/workers/{worker_id}/edit",
-    ),
-    (
-        "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/archive$"
-        ),
-        "/api/sessions/{session_id}/workers/{worker_id}/archive",
-    ),
-    (
-        "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/restore$"
-        ),
-        "/api/sessions/{session_id}/workers/{worker_id}/restore",
-    ),
+    ("POST", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/edit$"), "/api/sessions/{session_id}/workers/{worker_id}/edit"),
+    ("POST", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/archive$"), "/api/sessions/{session_id}/workers/{worker_id}/archive"),
+    ("POST", re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/restore$"), "/api/sessions/{session_id}/workers/{worker_id}/restore"),
 )
 
-# Hermes' stock API already owns the rich provider/model inventory endpoint.
-# H6.2 only exposes it through the same server-side authenticated Harness BFF.
+# Hermes owns the model inventory and assignment persistence. Harness only
+# exposes these existing contracts through the authenticated BFF.
 _H62_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("GET", re.compile(r"^/model-options$"), "/api/model/options"),
+    ("GET", re.compile(r"^/model-auxiliary$"), "/api/model/auxiliary"),
+    ("POST", re.compile(r"^/model-set$"), "/api/model/set"),
 )
 
 _H5_RECOVERY_BOOT = """s.onload=function(){
@@ -66,7 +48,12 @@ _H5_RECOVERY_BOOT = """s.onload=function(){
               var h63=document.createElement('script');
               h63.src='/harness-polish3.js';
               h63.onload=function(){
-                if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+                var hm=document.createElement('script');
+                hm.src='/harness-models.js';
+                hm.onload=function(){
+                  if(document.readyState!=='loading')document.dispatchEvent(new Event('DOMContentLoaded'));
+                };
+                document.head.appendChild(hm);
               };
               document.head.appendChild(h63);
             };
@@ -84,7 +71,7 @@ def resolve_upstream(method: str, browser_path: str) -> Optional[str]:
     method = str(method or "").upper()
     prefix = "/api/harness"
     if browser_path.startswith(prefix):
-        suffix = browser_path[len(prefix) :] or "/"
+        suffix = browser_path[len(prefix):] or "/"
         if method == _RECOVERY_ROUTE[0]:
             match = _RECOVERY_ROUTE[1].fullmatch(suffix)
             if match:
@@ -106,19 +93,17 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
     if upstream is None:
         return False
     if upstream != inherited:
+        proxy_parsed = parsed
+        proxy_upstream = upstream
         if parsed.query:
-            j(
-                handler,
-                {"error": "Harness operator/catalog routes do not accept query parameters"},
-                status=400,
-            )
-            return True
-        return foundation._proxy_json(
-            handler,
-            parsed,
-            method=method,
-            upstream_path=upstream,
-        )
+            # Explicitly permit only the model picker refresh hint.
+            if method == "GET" and parsed.path == "/api/harness/model-options" and parsed.query == "refresh=true":
+                proxy_parsed = parsed._replace(query="")
+                proxy_upstream = upstream + "?refresh=true"
+            else:
+                j(handler, {"error": "Harness operator/catalog routes do not accept query parameters"}, status=400)
+                return True
+        return foundation._proxy_json(handler, proxy_parsed, method=method, upstream_path=proxy_upstream)
     return tasks.handle_harness_request(handler, parsed, method=method)
 
 
@@ -165,6 +150,7 @@ def serve_harness_asset(handler, path: str) -> bool:
         "/harness-locales.js": "harness-locales.js",
         "/harness-polish2.js": "harness-polish2.js",
         "/harness-polish3.js": "harness-polish3.js",
+        "/harness-models.js": "harness-models.js",
     }
     if path in assets:
         return _serve_js_asset(handler, assets[path])
@@ -173,10 +159,4 @@ def serve_harness_asset(handler, path: str) -> bool:
 
 harness_enabled = foundation.harness_enabled
 
-
-__all__ = [
-    "handle_harness_request",
-    "harness_enabled",
-    "resolve_upstream",
-    "serve_harness_asset",
-]
+__all__ = ["handle_harness_request", "harness_enabled", "resolve_upstream", "serve_harness_asset"]

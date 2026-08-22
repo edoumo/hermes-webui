@@ -2,7 +2,7 @@
 
 The H3 BFF remains unchanged. This module adds only the H4 allowlisted routes
 and one local browser asset, delegating every other request and security
-primitive back to ``api.harness_ui``.
+primitive back to the Harness-owned BFF foundation.
 """
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from api import harness_ui as foundation
-from api.helpers import j
+from harness_runtime import bff as foundation
+from harness_runtime.http import j
 
 _SAFE_ID = r"[A-Za-z0-9._:-]{1,256}"
 
@@ -23,16 +23,12 @@ _H4_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ),
     (
         "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/retry$"
-        ),
+        re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/retry$"),
         "/api/sessions/{session_id}/workers/{worker_id}/retry",
     ),
     (
         "POST",
-        re.compile(
-            rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/activations/(?P<activation_id>{_SAFE_ID})/cancel$"
-        ),
+        re.compile(rf"^/sessions/(?P<session_id>{_SAFE_ID})/workers/(?P<worker_id>{_SAFE_ID})/activations/(?P<activation_id>{_SAFE_ID})/cancel$"),
         "/api/sessions/{session_id}/workers/{worker_id}/activations/{activation_id}/cancel",
     ),
 )
@@ -55,7 +51,7 @@ def resolve_upstream(method: str, browser_path: str) -> Optional[str]:
     method = str(method or "").upper()
     prefix = "/api/harness"
     if browser_path.startswith(prefix):
-        suffix = browser_path[len(prefix) :] or "/"
+        suffix = browser_path[len(prefix):] or "/"
         for route_method, pattern, template in _H4_ROUTES:
             if route_method != method:
                 continue
@@ -75,18 +71,9 @@ def handle_harness_request(handler, parsed, *, method: str) -> bool:
         return False
     if upstream != foundation_upstream:
         if parsed.query:
-            j(
-                handler,
-                {"error": "H4 Harness control routes do not accept query parameters"},
-                status=400,
-            )
+            j(handler, {"error": "H4 Harness control routes do not accept query parameters"}, status=400)
             return True
-        return foundation._proxy_json(
-            handler,
-            parsed,
-            method=method,
-            upstream_path=upstream,
-        )
+        return foundation._proxy_json(handler, parsed, method=method, upstream_path=upstream)
     return foundation.handle_harness_request(handler, parsed, method=method)
 
 
@@ -131,10 +118,4 @@ def serve_harness_asset(handler, path: str) -> bool:
 
 harness_enabled = foundation.harness_enabled
 
-
-__all__ = [
-    "handle_harness_request",
-    "harness_enabled",
-    "resolve_upstream",
-    "serve_harness_asset",
-]
+__all__ = ["handle_harness_request", "harness_enabled", "resolve_upstream", "serve_harness_asset"]
