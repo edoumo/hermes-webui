@@ -23,3 +23,11 @@ def json_response(handler, payload: Any, *, status: int = 200) -> None:
     handler.send_header("Content-Length", str(len(data)))
     handler.end_headers()
     handler.wfile.write(data)
+
+
+# Temporary ergonomic alias while the Harness BFF modules are moved out of the
+# historical ``api`` package. Keeping the same call shape avoids touching their
+# request/response semantics during extraction.
+j = json_response
+
+__all__ = ["CLIENT_DISCONNECT_ERRORS", "j", "json_response"]
