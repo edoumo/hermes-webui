@@ -14,15 +14,17 @@ def _static(name: str) -> str:
     return (STATIC / name).read_text(encoding="utf-8")
 
 
-def test_h63_is_loaded_after_h62_and_before_boot():
+def test_h63_is_loaded_after_h62_and_before_models_and_boot():
     boot = recovery._H5_RECOVERY_BOOT
     assert boot.index("h62.src='/harness-polish2.js'") < boot.index(
         "h63.src='/harness-polish3.js'"
-    ) < boot.index("document.dispatchEvent(new Event('DOMContentLoaded'))")
-    assert '"/harness-polish3.js": "harness-polish3.js"' in (
-        ROOT / "api" / "harness_ui_task_recovery.py"
-    ).read_text(encoding="utf-8")
-    assert '"/harness-polish3.js"' in (ROOT / "harness_server.py").read_text(
+    ) < boot.index("hm.src='/harness-models.js'") < boot.index(
+        "document.dispatchEvent(new Event('DOMContentLoaded'))"
+    )
+    recovery_source = (ROOT / "api" / "harness_ui_task_recovery.py").read_text(encoding="utf-8")
+    assert '"/harness-polish3.js": "harness-polish3.js"' in recovery_source
+    # The standalone HTTP entrypoint delegates static resolution to recovery.
+    assert "serve_harness_asset(self, parsed.path)" in (ROOT / "harness_server.py").read_text(
         encoding="utf-8"
     )
 
@@ -90,6 +92,7 @@ def test_h63_keeps_browser_security_and_sse_boundaries():
         "Authorization",
         "Bearer ",
         "API_SERVER_KEY",
+        "HERMES_HARNESS_GATEWAY_API_KEY",
         "HERMES_WEBUI_GATEWAY_API_KEY",
         "durable-workers.db",
     ):
